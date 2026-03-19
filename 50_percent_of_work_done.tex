@@ -1,0 +1,499 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{titlesec}
+
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection.}{0.5em}{}
+
+\begin{document}
+
+% ---------------- TITle PAGE ----------------
+\begin{titlepage}
+    \begin{center}
+        \textbf{NATIONAL RESEARCH UNIVERSITY HIGHER SCHOOL OF ECONOMICS}\\
+        Faculty of Computer Science\\
+        Bachelor's Programme ``Data Science and Business Analytics''\\[2cm]
+
+        \textbf{\Large Software Team Project Report}\\[0.8cm]
+        \textbf{on the topic}\\[0.4cm]
+
+        \textbf{\LARGE Equity Trading Strategies:}\\
+        \textbf{\LARGE Fundamental vs. Alternative Data Analysis}\\[0.8cm]
+
+        \textbf{Interim Report}\\
+        \textbf{First Control Point (50\% Completion)}\\[2cm]
+
+        \begin{flushleft}
+        Fulfilled by the students: \\
+        group \#DSBA 231 \\
+        Bogolaev Dmitrii \\[0.3cm]
+        group \#AMI 233 \\
+        Ivanov Stepan
+        \end{flushleft}
+
+        \vfill
+        Moscow 2026
+    \end{center}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ---------------- ANNOTATION ----------------
+\section{Annotation}
+
+This project is devoted to the development of a machine learning-based research and decision-support platform for equity trading strategies. The central idea of the system is to combine three groups of information that are usually studied either separately or only partially integrated in existing retail-oriented solutions: historical market dynamics, company-level fundamental indicators, and alternative data extracted from financial news using natural language processing methods.
+
+In traditional equity analysis, technical indicators are often used to identify short-term momentum, reversal patterns, volatility shifts, and possible entry or exit points. Fundamental indicators, in turn, describe the long-term quality and valuation of a company and are commonly employed in portfolio selection, screening, and strategic asset allocation. At the same time, modern financial markets react not only to numerical indicators, but also to information flows. News releases, earnings commentaries, guidance revisions, regulatory announcements, and macroeconomic headlines can all influence market behavior. As a result, textual information has become an important source of signals that can complement both technical and fundamental analysis.
+
+The project aims to investigate whether a joint modeling approach based on technical, fundamental, and news-derived features can improve short-term stock movement prediction and lead to more robust trading signals than approaches relying on only one type of information. To address this question, we propose a modular system consisting of a data ingestion layer, a feature engineering layer, a machine learning layer, a backtesting engine, and a web-based interface for model interpretation and demonstration.
+
+The machine learning component of the system includes multiple models rather than a single predictive algorithm. This design choice is important for both practical and research reasons. From the practical perspective, different models capture different structures in the data: linear models provide interpretability and a natural baseline, while tree-based ensemble methods are capable of learning non-linear relationships between heterogeneous variables. From the research perspective, comparing several models makes it possible to evaluate not only predictive quality, but also the contribution of different groups of features and the relative stability of model performance under changing market conditions.
+
+An additional component of the project is a transformer-based NLP module for sentiment extraction from financial news. Instead of making such a deep learning model the central forecasting engine of the whole system, we treat it as an auxiliary analytical layer that transforms raw textual information into structured numerical features. These features are then merged with technical and fundamental variables and used by the core machine learning models. This architecture allows the system to incorporate deep learning methods while remaining feasible within the time and computational constraints of a course project.
+
+At the current stage, approximately half of the planned work has been completed. The conceptual framework of the platform is fully defined, the main data sources have been selected, the target prediction task has been formalized, and the initial data engineering and feature generation pipelines have been designed. The next project stages will focus on model training, comparative experiments, trading strategy simulation, and implementation of the web interface for interactive demonstration.
+
+% ---------------- INTRODUCTION ----------------
+\section{Introduction}
+
+The growing availability of market data, financial reports, and textual information has significantly changed the landscape of quantitative finance. In the past, many trading decisions were based primarily on either discretionary judgment or narrow sets of numerical variables. Over time, the rise of data science and machine learning has made it possible to process much broader information sets and to search for statistical regularities in a more systematic manner. As a result, the design of trading strategies has gradually evolved from isolated indicator-based rules toward integrated predictive frameworks that combine several types of data.
+
+Equity markets represent a particularly interesting environment for such analysis. On the one hand, they generate large volumes of structured time series, including prices, returns, volatility measures, and liquidity indicators. On the other hand, they are highly sensitive to company-specific and macroeconomic news. Market participants react not only to realized earnings or valuation multiples, but also to tone, expectations, risk narratives, and the intensity of information coverage. Because of this, the same stock can move not only due to technical market mechanics, but also due to changes in perceived future prospects reflected in textual data.
+
+This observation motivates the central idea of the current project. We propose that equity trading strategies can benefit from an architecture that combines three major information domains:
+
+\begin{itemize}[leftmargin=1.2cm]
+    \item \textbf{Technical market information}, such as momentum, volatility, and trend indicators derived from historical prices and trading volumes;
+    \item \textbf{Fundamental company information}, such as profitability, leverage, valuation, and growth-related metrics;
+    \item \textbf{Alternative data}, represented in this project by financial news processed through natural language processing methods.
+\end{itemize}
+
+The purpose of such a combination is not simply to increase the number of variables in the model. Instead, the goal is to capture different mechanisms that may drive stock returns. Technical indicators describe short-term market structure and trading behavior. Fundamental indicators reflect the broader economic quality of the business and may serve as a stabilizing context for prediction. News sentiment and news intensity, in turn, can provide a proxy for changing expectations, attention, and uncertainty. If these components are combined correctly, the resulting system may generate more informative and more explainable signals than models based on only one type of input.
+
+A second important motivation of this project is the distinction between predictive accuracy and trading usefulness. In many machine learning studies, the main emphasis is placed on classification metrics such as accuracy or ROC-AUC. However, in financial applications these metrics do not always translate directly into superior trading performance. For example, a model may classify daily returns reasonably well on average but still fail to generate attractive risk-adjusted returns once transaction timing and signal thresholds are taken into account. Therefore, our project is deliberately structured around two layers of evaluation: statistical evaluation of predictive models and financial evaluation through backtesting.
+
+The practical output of the project is planned as a web-based research platform rather than only a Jupyter notebook with isolated experiments. This is an important design choice. A web interface allows the user to inspect a selected asset, view the current model signal, examine the major technical and fundamental features, review sentiment extracted from recent news, and compare the behavior of different models. In addition, such an interface makes it possible to present the project not merely as a sequence of experiments, but as a coherent decision-support prototype that could, with further refinement, serve as a basis for a more advanced analytical system.
+
+From an academic perspective, the project also has a clear research dimension. The title itself, \textit{Fundamental vs. Alternative Data Analysis}, suggests a comparative question: to what extent does alternative data improve the predictive and trading quality of a model already supplied with technical and fundamental information? This question is especially relevant because many existing retail solutions provide technical charts and basic financial metrics but only a limited, poorly structured integration of textual information. By explicitly comparing several feature configurations and model families, the project aims to move beyond a simple engineering prototype and toward an empirical investigation of the added value of alternative data.
+
+Finally, the project has been designed with realism in mind. Within the timeframe of the course, it is not practical to develop a high-frequency trading system or train a large-scale proprietary language model from scratch. Instead, the project follows a modular and feasible architecture: historical market data are stored locally and updated incrementally, multiple classical machine learning models are used as the main predictive engines, and a pre-trained transformer-based sentiment model is employed as a supporting feature extractor for textual information. This balance allows the project to remain ambitious while still being technically achievable.
+
+% ---------------- LITERATURE REVIEW ----------------
+\section{Literature Review}
+
+The literature relevant to this project may be divided into three broad streams: research on technical and quantitative trading strategies, research on the predictive role of firm fundamentals, and research on alternative data and financial natural language processing.
+
+The first stream includes studies on technical analysis, statistical arbitrage, and machine learning-based forecasting of asset returns. Classical technical trading methods are based on moving averages, momentum oscillators, support and resistance levels, volatility bands, and similar constructs derived from price history. Although the academic community has often debated the extent to which technical indicators contain genuine predictive power, many empirical studies suggest that such variables may still capture useful short-term structure, especially when treated not as deterministic rules but as engineered features in a machine learning pipeline. In modern settings, technical variables are frequently used as input to classifiers and regressors rather than as standalone decision rules. This shift is important because machine learning models can exploit non-linear interactions among indicators that may not be visible in isolated chart patterns.
+
+The second stream concerns the role of fundamental data in equity analysis. Financial theory has long emphasized that stock prices should, at least in the long run, reflect expected future cash flows, discount rates, growth opportunities, and capital structure characteristics. Ratios such as price-to-earnings, price-to-book, return on equity, debt-to-equity, and earnings growth are often used by analysts to evaluate whether a company appears overvalued, undervalued, financially strong, or financially vulnerable. While such metrics are more naturally associated with medium-term or long-term investment decisions, there is increasing interest in understanding whether they can also improve short-horizon predictive models by providing structural context. For example, a technical breakout in a financially weak or highly leveraged company may differ in quality from a similar technical pattern in a company with stronger profitability and lower balance sheet risk.
+
+The third and most rapidly developing stream concerns alternative data. In recent years, researchers and practitioners have increasingly explored the use of non-traditional data sources for financial prediction, including web traffic, satellite imagery, social media, and news. Among these, financial news remains one of the most accessible and economically interpretable categories. A large body of research shows that news tone, semantic content, and narrative framing can affect returns, volatility, liquidity, and investor attention. The challenge, however, lies in transforming raw text into meaningful quantitative signals.
+
+Earlier approaches to text analysis in finance often relied on dictionary-based sentiment methods. A common example is the use of domain-specific financial lexicons, such as the Loughran--McDonald dictionary, designed to address the fact that general-purpose sentiment dictionaries may misclassify financial terminology. Such lexicon-based approaches are interpretable and computationally efficient, but they often struggle with context dependence, negation, and more subtle semantic distinctions.
+
+More recent work uses machine learning and deep learning to analyze financial text. In particular, transformer architectures have become dominant in NLP due to their ability to model contextual meaning more accurately than earlier bag-of-words or recurrent methods. Financially adapted transformer models, such as FinBERT, have demonstrated strong performance on sentiment classification tasks involving earnings releases, analyst commentary, and financial headlines. These models are especially relevant for the current project because they allow us to obtain structured sentiment probabilities from unstructured news text without training a language model from scratch.
+
+Despite the growing literature on each of these areas individually, there remains a gap in integrated practical systems that combine all three data domains into a single decision-support framework. Many academic studies focus only on model performance under narrow experimental setups. Many industrial products, meanwhile, prioritize usability and visualization but do not clearly expose how different data sources contribute to the final signal. Our project is positioned in between these two extremes: it aims to be practical enough to function as a user-facing analytical platform, while also preserving an empirical research core centered on comparative experiments.
+
+Another important theme in the literature is the distinction between predictive modeling and strategy evaluation. A substantial number of studies report statistical metrics while paying limited attention to implementable trading behavior. However, financial prediction should ideally be assessed not only by how often the sign of the return is predicted correctly, but also by whether the generated signals lead to attractive return distributions, controlled drawdowns, and acceptable stability across periods. This motivates the inclusion of a backtesting framework as a central rather than optional component of our project.
+
+Finally, the literature on explainable machine learning is also relevant. In financial settings, interpretability is valuable not only for regulatory and practical reasons, but also for model debugging and research insight. If a model shows strong performance, it is useful to understand whether this is driven mainly by momentum, valuation, sentiment, or interactions among them. Consequently, our planned framework includes not only multiple models, but also a layer for explaining feature importance and factor contributions.
+
+Taken together, the existing literature supports the hypothesis that technical, fundamental, and alternative data may each contain useful information. At the same time, it also suggests that the key challenge is not the isolated use of any one category, but rather the design of a coherent architecture in which these sources are aligned, transformed, compared, and evaluated under a common prediction and backtesting framework. This challenge defines the research direction of the present project.
+
+% ---------------- RESEARCH PROBLEM ----------------
+\section{Research Problem and Project Concept}
+
+The central research problem of the project may be formulated as follows: \textit{can the joint use of technical indicators, fundamental company metrics, and NLP-derived news sentiment improve short-term stock movement prediction and the quality of trading signals compared to more traditional feature sets?}
+
+This question contains two distinct but related dimensions. The first is a predictive dimension. Here, the task is to determine whether additional feature groups improve the model's ability to classify the future direction of stock returns. The second is a financial dimension. Here, the task is to determine whether improved predictions actually translate into a better trading strategy when signals are converted into actions and tested on historical data.
+
+To address this problem, the project adopts the following conceptual logic.
+
+First, we define a core supervised learning task. For a selected stock and date $t$, the model observes a feature vector $X_t$ and predicts whether the future return over a chosen horizon is positive. Formally, the target variable may be written as
+
+\[
+y_t =
+\begin{cases}
+1, & \text{if } r_{t+h} > 0, \\
+0, & \text{otherwise,}
+\end{cases}
+\]
+
+where $r_{t+h}$ is the return over the forecast horizon $h$.
+
+Second, the feature vector is divided into several meaningful blocks. Let
+
+\[
+X_t = \left(X_t^{tech}, X_t^{fund}, X_t^{news}\right),
+\]
+
+where $X_t^{tech}$ contains technical indicators, $X_t^{fund}$ contains fundamental variables, and $X_t^{news}$ contains features derived from the NLP processing of financial headlines. Such a decomposition is not merely notation. It corresponds to the empirical design of the project, because one of the key objectives is to compare models built on different subsets of these variables.
+
+Third, the system is designed not around one model, but around a family of models. This allows us to study several forms of complexity. A linear baseline, such as Logistic Regression, provides an interpretable reference point. Ensemble tree methods, such as Random Forest and gradient boosting, provide a more flexible non-linear framework. The transformer-based NLP model is not used as the final stock predictor, but rather as a specialized feature extractor for financial text. This is a crucial architectural decision, because it keeps the project feasible while still allowing it to incorporate deep learning meaningfully.
+
+From the product perspective, the platform can be understood as a research-oriented decision-support system. The user selects a ticker and accesses a dashboard that includes market dynamics, current model output, recent news sentiment, and backtest summaries. In other words, the platform is not intended to automate real capital allocation or execute orders in the market. Instead, its purpose is to provide a transparent environment for signal generation, comparison, and interpretation.
+
+A key feature of the project concept is the emphasis on \textit{modularity}. Rather than building a monolithic pipeline in which all logic is mixed together, we separate the system into the following layers:
+
+\begin{enumerate}[leftmargin=1.2cm]
+    \item \textbf{Data ingestion layer}, responsible for collecting historical prices, company fundamentals, and news data;
+    \item \textbf{Storage layer}, responsible for maintaining reproducible historical datasets and incremental updates;
+    \item \textbf{Feature engineering layer}, responsible for transforming raw data into model-ready variables;
+    \item \textbf{Modeling layer}, responsible for training and comparing predictive models;
+    \item \textbf{Backtesting layer}, responsible for evaluating the trading relevance of model outputs;
+    \item \textbf{Interface layer}, responsible for presenting results in a web-based form.
+\end{enumerate}
+
+This architecture has several advantages. It improves maintainability, since each layer can be modified independently. It improves reproducibility, since raw data, engineered features, and model outputs can be stored separately. It also improves the academic quality of the project, because each stage of the pipeline becomes easier to describe, justify, and evaluate.
+
+The project concept also includes a comparative experimental design. Instead of training one final model on the entire feature set and stopping there, we plan to compare at least four configurations:
+
+\begin{itemize}[leftmargin=1.2cm]
+    \item technical features only;
+    \item technical + fundamental features;
+    \item technical + news-based features;
+    \item technical + fundamental + news-based features.
+\end{itemize}
+
+Such a structure is essential for answering the project's main question. Without ablation-style comparison, it would be difficult to determine whether alternative data genuinely contributes useful information or merely increases model complexity.
+
+Another central element of the project concept is the use of locally stored historical data. Instead of relying entirely on live external API calls at the moment of analysis, the system is based primarily on a historical data layer that is updated incrementally. This design is important for two reasons. First, it ensures reproducibility of experiments and backtests. Second, it makes it possible to compute features consistently over long time spans without repeated dependence on unstable external requests. A lightweight live-data component may still be included for demonstration purposes, but it is not the foundation of the system.
+
+At the current 50\% stage, the project concept is already clearly fixed. The data domains have been selected, the modeling task has been defined, the architecture has been divided into modules, and the comparative research logic has been determined. The remaining work will therefore not consist of inventing the system from scratch, but of implementing, validating, and presenting the framework that has already been designed.
+
+\newpage
+
+% -------------------------------------------------
+\section{Research Objectives}
+
+At this stage of the project, it is important to clearly define what exactly we are trying to achieve. The overall goal is not only to build a model, but to understand how different types of data affect prediction quality and trading performance.
+
+The first objective is to construct a unified dataset that combines multiple sources of information. This includes market data, company fundamentals, and financial news. Each of these data types has different frequency, structure, and noise level. Because of that, one of the key tasks is to properly align and synchronize them.
+
+The second objective is to design a feature engineering pipeline. Raw data cannot be used directly in machine learning models. It needs to be transformed into meaningful variables. For example, price data is converted into returns, volatility measures, and technical indicators. News data is converted into sentiment scores using NLP models. Fundamental data is normalized and aligned with time series.
+
+The third objective is to train several machine learning models and compare their performance. It is important not to rely on a single model. Instead, we want to understand how different models behave under the same data conditions.
+
+The fourth objective is to evaluate models not only using statistical metrics, but also using trading metrics. This is an important distinction. A model can have good accuracy but still perform poorly in a trading setting.
+
+Finally, the fifth objective is to analyze whether alternative data actually improves performance. This is the central research question of the project.
+
+% -------------------------------------------------
+\section{Functional Requirements}
+
+The system is designed as a research platform rather than a production trading system. However, it still needs to support a set of core functionalities.
+
+The first function is data ingestion. The system must be able to load historical price data for selected stocks. It should also retrieve fundamental indicators and financial news. These processes should be automated as much as possible.
+
+The second function is data storage. All collected data must be stored in a structured format. Historical data should be saved locally so that experiments can be reproduced. This also allows us to avoid repeated API calls.
+
+The third function is feature engineering. The system must compute technical indicators, aggregate news sentiment, and prepare model-ready datasets. This step should be consistent across all experiments.
+
+The fourth function is model training. The system must support training of multiple models, including linear models and tree-based models. Each model should be trained on the same dataset for fair comparison.
+
+The fifth function is prediction. For a given ticker and date, the system should output the probability of positive return. This probability is later used to generate trading signals.
+
+The sixth function is backtesting. The system must simulate trading strategies based on model predictions. This includes computing returns, drawdowns, and risk-adjusted metrics.
+
+The final function is visualization. The system should display results in a clear and understandable way. This includes charts, tables, and summary statistics.
+
+% -------------------------------------------------
+\section{Non-Functional Requirements}
+
+In addition to core functionality, the system must satisfy several non-functional requirements.
+
+First, reproducibility is critical. All experiments should be repeatable. This means that datasets, feature transformations, and model parameters must be fixed and stored.
+
+Second, modularity is important. The system should be divided into separate components. For example, data ingestion, feature engineering, and modeling should not be tightly coupled. This makes the system easier to extend and debug.
+
+Third, performance requirements are moderate but still relevant. The system should be able to process one ticker relatively quickly. Training does not need to be real-time, but prediction should be fast enough for interactive use.
+
+Fourth, interpretability is required. The system should provide explanations for model predictions. This is especially important in finance, where black-box models are often viewed with skepticism.
+
+Fifth, robustness must be considered. Financial data is often noisy and incomplete. The system should handle missing values and inconsistent data gracefully.
+
+Finally, scalability should be considered at a basic level. While the project focuses on a limited number of stocks, the architecture should allow future expansion.
+
+% -------------------------------------------------
+\section{Data Sources and Data Pipeline}
+
+The system relies on three main categories of data: market data, fundamental data, and news data.
+
+Market data includes daily price information such as open, high, low, close, and volume. This data is used to compute technical indicators and returns.
+
+Fundamental data includes company-level metrics such as earnings, valuation ratios, and financial structure indicators. This data is typically updated less frequently than market data.
+
+News data consists of financial headlines related to specific companies. Each headline is processed using a sentiment model.
+
+The data pipeline consists of several steps.
+
+First, raw data is collected from external APIs. This step includes downloading historical prices and retrieving news.
+
+Second, the data is cleaned. Missing values are handled, and inconsistent entries are removed.
+
+Third, the data is aligned. Since different sources have different timestamps, they must be synchronized.
+
+Fourth, features are computed. This includes technical indicators, sentiment aggregates, and normalized fundamental variables.
+
+Finally, the processed dataset is stored and used for modeling.
+
+This pipeline is designed to be incremental. New data can be added without rebuilding the entire dataset.
+
+% -------------------------------------------------
+\section{Feature Engineering Pipeline}
+
+Feature engineering is one of the most important parts of the project. The quality of features directly affects model performance.
+
+Technical features are derived from price data. These include returns, moving averages, and oscillators such as RSI. These features capture short-term market behavior.
+
+Fundamental features describe the financial state of the company. These include valuation ratios and profitability indicators. These features are more stable and provide long-term context.
+
+News features are derived from textual data. Each news headline is passed through a sentiment model. The outputs are then aggregated over time.
+
+For example, we compute average sentiment over the last few days. We also count the number of positive and negative news items.
+
+An important aspect is feature alignment. All features must correspond to the same time index. This requires careful handling of timestamps.
+
+Another important step is normalization. Features are scaled to ensure that models do not become biased toward variables with large magnitudes.
+
+Finally, lag features are introduced. This allows the model to use past information to predict future outcomes.
+
+% -------------------------------------------------
+\section{Modeling Approach}
+
+The modeling approach is based on supervised learning.
+
+The first model is Logistic Regression. This model is simple and interpretable. It serves as a baseline.
+
+The second model is Random Forest. This model can capture non-linear relationships and interactions between variables.
+
+The third model is gradient boosting, such as XGBoost or LightGBM. This is the main model used in the project. It is known for strong performance on tabular data.
+
+Each model is trained on the same dataset. This allows for fair comparison.
+
+Predictions are generated in the form of probabilities. These probabilities are later converted into trading signals.
+
+The goal is not only to maximize predictive accuracy, but also to achieve stable performance across different time periods.
+
+\newpage
+
+% -------------------------------------------------
+\section{Backtesting Framework}
+
+One of the key components of the project is the backtesting module. The purpose of this module is to evaluate how model predictions translate into actual trading performance.
+
+Instead of only measuring accuracy, we simulate a simple trading strategy based on model outputs. This allows us to understand whether the model is useful in practice.
+
+The basic idea is the following. For each day $t$, the model produces a probability $p_t$ that the future return will be positive. Based on this probability, we generate a trading signal.
+
+If $p_t$ is above a certain threshold, we take a long position. If it is below another threshold, we either take a short position or stay out of the market.
+
+In the simplest case, the strategy can be written as:
+
+\[
+\text{signal}_t =
+\begin{cases}
+1, & \text{if } p_t > \theta \\
+0, & \text{otherwise}
+\end{cases}
+\]
+
+where $\theta$ is a predefined threshold.
+
+The daily return of the strategy is then:
+
+\[
+R_t = \text{signal}_t \cdot r_{t+1}
+\]
+
+where $r_{t+1}$ is the actual return on the next day.
+
+This setup allows us to compute cumulative returns over time. We also calculate additional metrics such as volatility and drawdowns.
+
+One important limitation is that transaction costs are not fully modeled at this stage. However, this simplification is acceptable for a course project.
+
+The backtesting module is designed to be simple but flexible. It can be extended later to include more realistic assumptions.
+
+% -------------------------------------------------
+\section{Evaluation Metrics}
+
+To properly evaluate the models, we use both statistical and financial metrics.
+
+From the statistical perspective, we consider standard classification metrics. These include accuracy, precision, recall, and ROC-AUC. These metrics help us understand how well the model predicts the direction of returns.
+
+However, these metrics are not sufficient on their own. In trading, the distribution of returns matters more than classification quality.
+
+Therefore, we also use financial metrics.
+
+The first metric is cumulative return. It measures the total return generated by the strategy over the test period.
+
+The second metric is volatility. It measures the variability of returns.
+
+The third metric is the Sharpe ratio. It is defined as:
+
+\[
+\text{Sharpe} = \frac{\mathbb{E}[R]}{\sigma(R)}
+\]
+
+where $\mathbb{E}[R]$ is the average return and $\sigma(R)$ is the standard deviation.
+
+The fourth metric is maximum drawdown. This measures the largest drop from a peak to a trough in cumulative returns.
+
+These metrics provide a more complete picture of model performance.
+
+% -------------------------------------------------
+\section{Experimental Design}
+
+The experiments are designed to answer the main research question of the project.
+
+We compare several feature configurations. Each configuration represents a different combination of data sources.
+
+The first configuration uses only technical features. This serves as a baseline.
+
+The second configuration adds fundamental features.
+
+The third configuration adds news-based features.
+
+The fourth configuration combines all three types of features.
+
+For each configuration, we train multiple models. This includes Logistic Regression, Random Forest, and gradient boosting.
+
+The dataset is split into training and testing parts based on time. This is important because financial data is sequential.
+
+We avoid random shuffling and instead use a chronological split. This better reflects real-world conditions.
+
+Each model is evaluated on the same test period. This ensures fair comparison.
+
+We also perform simple hyperparameter tuning for the main models.
+
+% -------------------------------------------------
+\section{Preliminary Results}
+
+At the current stage, full experiments have not yet been completed. However, some preliminary observations can already be made.
+
+First, technical features alone provide a reasonable baseline. Models trained on these features are able to capture short-term patterns.
+
+Second, adding fundamental features slightly improves stability. While the impact on accuracy is limited, the predictions become less noisy.
+
+Third, news-based features appear to have a stronger effect during periods of high information flow. For example, during earnings announcements, sentiment signals become more informative.
+
+However, the effect of news is not uniform. In some periods, it adds noise rather than useful information.
+
+Preliminary tests suggest that combining all feature types leads to the most balanced results. However, this needs to be confirmed with full experiments.
+
+% -------------------------------------------------
+\section{Discussion}
+
+The current results highlight several important points.
+
+First, there is no single feature type that dominates in all situations. Technical, fundamental, and news data each capture different aspects of market behavior.
+
+Second, the value of alternative data depends on context. News sentiment is more useful when the market is driven by information events.
+
+Third, model complexity does not always lead to better results. In some cases, simpler models perform comparably to more complex ones.
+
+This suggests that feature quality is more important than model complexity.
+
+Another important observation is the trade-off between prediction and trading performance. A model with slightly lower accuracy may still produce better returns if its signals are more consistent.
+
+At this stage, the results should be interpreted with caution. The experiments are not yet complete, and further validation is needed.
+
+However, the initial findings support the idea that combining multiple data sources is a promising approach.
+
+% -------------------------------------------------
+\section{Current Progress Summary (50\%)}
+
+At the current stage, approximately half of the project has been completed. The work that has already been done covers the conceptual, data-related, and initial modeling components of the system. This section provides a more detailed overview of the progress achieved so far.
+
+First, the overall project concept and architecture have been fully defined. The main idea of combining technical indicators, fundamental data, and alternative data has been formalized into a clear system structure. The architecture has been divided into several layers, including data ingestion, storage, feature engineering, modeling, backtesting, and visualization. This modular design allows us to develop and test each component independently.
+
+Second, the data pipeline has been partially implemented. Historical price data has been successfully collected for selected stocks and stored locally. The data includes daily open, high, low, close, and volume values. Basic preprocessing steps have already been applied, including handling missing values and converting prices into returns.
+
+In addition to market data, initial work has been done on integrating financial news. A simple pipeline for collecting news headlines has been created. These headlines are then passed through a sentiment model to extract basic sentiment scores. While this component is still being improved, the core idea has already been implemented and tested.
+
+Third, the feature engineering process has been developed. A set of technical indicators has been implemented, including moving averages and momentum-based features. These indicators serve as the primary input for baseline models.
+
+Basic sentiment features have also been constructed. These include aggregated sentiment scores over recent time windows and simple counts of positive and negative news items. Although these features are still relatively simple, they already allow us to test the impact of alternative data.
+
+Fundamental features have been partially integrated. At this stage, the focus has been on selecting relevant variables and aligning them with time series data. Full integration and normalization of these features is still in progress.
+
+Fourth, the modeling framework has been implemented. Several baseline models have already been trained. These include Logistic Regression and Random Forest. Initial experiments show that these models are able to capture basic patterns in the data.
+
+The model training pipeline has been designed in a way that allows easy comparison between different models. This is important for the experimental part of the project.
+
+Fifth, the backtesting framework has been designed and partially implemented. The basic logic of converting model predictions into trading signals has been completed. Initial tests have been run on a limited dataset.
+
+Although the backtesting module is still simplified, it already allows us to evaluate strategies in terms of cumulative returns and basic risk metrics.
+
+Finally, the project has moved beyond the planning stage and entered the implementation stage. The main components of the system are no longer abstract ideas, but working modules that can be tested and improved.
+
+At the same time, several important tasks remain for the second half of the project. These include improving feature engineering, especially for news data, conducting full-scale experiments, tuning model parameters, and developing the web interface.
+
+Overall, the current progress can be described as a transition from design to execution. The foundation of the system has been built, and the next stage will focus on improving quality, conducting experiments, and presenting results.
+
+\newpage
+
+% -------------------------------------------------
+\begin{thebibliography}{99}
+
+\bibitem{murphy}
+Murphy J. J. \textit{Technical Analysis of the Financial Markets}. New York: New York Institute of Finance, 1999.
+
+\bibitem{fama}
+Fama E. F. Efficient Market Hypothesis. \textit{Journal of Finance}, 1970.
+
+\bibitem{loughran}
+Loughran T., McDonald B. When Is a Liability Not a Liability? Textual Analysis, Dictionaries, and 10-Ks. \textit{Journal of Finance}, 2011.
+
+\bibitem{finbert}
+Araci D. FinBERT: Financial Sentiment Analysis with Pre-trained Language Models. 2019.
+
+\bibitem{xgboost}
+Chen T., Guestrin C. XGBoost: A Scalable Tree Boosting System. \textit{KDD}, 2016.
+
+\bibitem{lightgbm}
+Ke G. et al. LightGBM: A Highly Efficient Gradient Boosting Decision Tree. \textit{NeurIPS}, 2017.
+
+\bibitem{rf}
+Breiman L. Random Forests. \textit{Machine Learning}, 2001.
+
+\bibitem{logreg}
+Hosmer D., Lemeshow S. \textit{Applied Logistic Regression}. Wiley, 2000.
+
+\bibitem{nlp}
+Devlin J. et al. BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. 2018.
+
+\bibitem{yfinance}
+Yahoo Finance API Documentation. Available online.
+
+\bibitem{alphavantage}
+Alpha Vantage API Documentation. Available online.
+
+\bibitem{newsapi}
+NewsAPI Documentation. Available online.
+
+\bibitem{investopedia}
+Investopedia. Financial terms and definitions. Available online.
+
+\bibitem{sharpe}
+Sharpe W. F. Capital Asset Prices: A Theory of Market Equilibrium. \textit{Journal of Finance}, 1964.
+
+\bibitem{backtesting}
+Pardo R. \textit{The Evaluation and Optimization of Trading Strategies}. Wiley, 2008.
+
+\end{thebibliography}
+
+\end{document}
