@@ -23,8 +23,24 @@ def test_train_model_lifecycle_http() -> None:
     for _ in range(10):
         rs = client.get(f"/api/v1/models/model_d/train/{run_id}")
         assert rs.status_code == 200
-        status = rs.json()["status"]
+        payload = rs.json()
+        status = payload["status"]
         if status in {"completed", "failed"}:
             break
         time.sleep(0.05)
     assert status in {"completed", "failed"}
+    assert payload["params"]["target"] == "next_day_return_gt_0"
+    if status == "completed":
+        assert isinstance(payload["dataset_fingerprint"], str)
+        assert len(payload["dataset_fingerprint"]) == 16
+        assert "f1" in payload["metrics"]
+
+    rl = client.get("/api/v1/models/model_d/experiments", params={"limit": 5})
+    assert rl.status_code == 200
+    listed = rl.json()
+    assert listed["total"] >= 1
+    assert any(item["run_id"] == run_id for item in listed["items"])
+
+    one = client.get(f"/api/v1/models/model_d/experiments/{run_id}")
+    assert one.status_code == 200
+    assert one.json()["run_id"] == run_id

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     postgres_db: str = "equisense"
     postgres_user: str = "postgres"
     postgres_password: str = "postgres"
+    experiment_store_backend: str = "memory"
 
     @property
     def database_url(self) -> str:

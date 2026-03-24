@@ -8,6 +8,8 @@ from app.contracts.data_providers import (
     NewsDataProvider,
 )
 from app.contracts.features import FeatureStorePort
+from app.core.config import settings
+from app.core.database import engine
 from app.data.fundamental_data import FundamentalDataClient
 from app.data.market_data import MarketDataClient
 from app.data.news_data import NewsDataClient
@@ -16,8 +18,24 @@ from app.features.feature_store import FeatureStore
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
 from app.jobs.store import FileJobStore
 from app.services.backtesting_service import BacktestingService
+from app.services.experiment_store import (
+    ExperimentStore,
+    InMemoryExperimentStore,
+    PostgresExperimentStore,
+    ResilientExperimentStore,
+)
 from app.services.prediction_service import PredictionService
 from app.services.training_service import TrainingService, get_training_registry
+
+_memory_experiment_store = InMemoryExperimentStore()
+_experiment_store: ExperimentStore
+if settings.experiment_store_backend.lower() == "postgres":
+    _experiment_store = ResilientExperimentStore(
+        primary=PostgresExperimentStore(engine=engine),
+        fallback=_memory_experiment_store,
+    )
+else:
+    _experiment_store = _memory_experiment_store
 
 
 def get_http_client(request: Request):
@@ -61,6 +79,7 @@ def get_training_service() -> TrainingService:
     return TrainingService(
         features=FeatureStore(),
         registry=get_training_registry(),
+        experiment_store=_experiment_store,
     )
 
 

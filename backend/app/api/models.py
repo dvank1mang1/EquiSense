@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.identifiers import ModelId
 from app.services.dependencies import get_training_service
@@ -56,6 +58,26 @@ class TrainModelResponse(BaseModel):
     status: str
 
 
+class TrainingRunStatusResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    run_id: str
+    model_id: str
+    ticker: str
+    status: str
+    created_at: str
+    updated_at: str
+    params: dict[str, Any] | None = None
+    dataset_fingerprint: str | None = None
+    metrics: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class ExperimentListResponse(BaseModel):
+    items: list[TrainingRunStatusResponse]
+    total: int = Field(..., ge=0)
+
+
 @router.post("/{model_id}/train")
 async def train_model(
     model_id: str,
@@ -83,15 +105,75 @@ async def get_train_status(
     service: TrainingService = Depends(get_training_service),
 ):
     _ = model_id
-    run = service.get_status(run_id)
+    run = await service.get_status(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Unknown training run id: {run_id}")
-    return {
-        "run_id": run.run_id,
-        "model_id": run.model_id,
-        "ticker": run.ticker,
-        "status": run.status,
-        "created_at": run.created_at,
-        "updated_at": run.updated_at,
-        "error": run.error,
-    }
+    return TrainingRunStatusResponse(
+        run_id=run.run_id,
+        model_id=run.model_id,
+        ticker=run.ticker,
+        status=run.status,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        params=run.params,
+        dataset_fingerprint=run.dataset_fingerprint,
+        metrics=run.metrics,
+        error=run.error,
+    )
+
+
+@router.get("/{model_id}/experiments", response_model=ExperimentListResponse)
+async def list_model_experiments(
+    model_id: str,
+    ticker: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=200),
+    service: TrainingService = Depends(get_training_service),
+):
+    try:
+        _ = ModelId(model_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Unknown model id: {model_id!r}") from e
+    runs = await service.list_experiments(model_id=model_id, ticker=ticker, limit=limit)
+    items = [
+        TrainingRunStatusResponse(
+            run_id=run.run_id,
+            model_id=run.model_id,
+            ticker=run.ticker,
+            status=run.status,
+            created_at=run.created_at,
+            updated_at=run.updated_at,
+            params=run.params,
+            dataset_fingerprint=run.dataset_fingerprint,
+            metrics=run.metrics,
+            error=run.error,
+        )
+        for run in runs
+    ]
+    return ExperimentListResponse(items=items, total=len(items))
+
+
+@router.get("/{model_id}/experiments/{run_id}", response_model=TrainingRunStatusResponse)
+async def get_model_experiment(
+    model_id: str,
+    run_id: str,
+    service: TrainingService = Depends(get_training_service),
+):
+    try:
+        _ = ModelId(model_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Unknown model id: {model_id!r}") from e
+    run = await service.get_status(run_id)
+    if run is None or run.model_id != model_id:
+        raise HTTPException(status_code=404, detail=f"Unknown experiment id: {run_id}")
+    return TrainingRunStatusResponse(
+        run_id=run.run_id,
+        model_id=run.model_id,
+        ticker=run.ticker,
+        status=run.status,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        params=run.params,
+        dataset_fingerprint=run.dataset_fingerprint,
+        metrics=run.metrics,
+        error=run.error,
+    )
