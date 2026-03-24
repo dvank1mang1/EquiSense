@@ -11,9 +11,13 @@ from app.contracts.features import FeatureStorePort
 from app.data.fundamental_data import FundamentalDataClient
 from app.data.market_data import MarketDataClient
 from app.data.news_data import NewsDataClient
+from app.etl.pipeline import RawToProcessedETL
 from app.features.feature_store import FeatureStore
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
+from app.jobs.store import FileJobStore
+from app.services.backtesting_service import BacktestingService
 from app.services.prediction_service import PredictionService
+from app.services.training_service import TrainingService, get_training_registry
 
 
 def get_http_client(request: Request):
@@ -46,8 +50,32 @@ def get_prediction_service(
     )
 
 
+def get_backtesting_service(request: Request) -> BacktestingService:
+    return BacktestingService(
+        market=MarketDataClient(http=get_http_client(request)),
+        features=FeatureStore(),
+    )
+
+
+def get_training_service() -> TrainingService:
+    return TrainingService(
+        features=FeatureStore(),
+        registry=get_training_registry(),
+    )
+
+
+def get_etl_runner() -> RawToProcessedETL:
+    return RawToProcessedETL()
+
+
+def get_job_store() -> FileJobStore:
+    return FileJobStore()
+
+
 def get_batch_refresh_orchestrator(request: Request) -> BatchRefreshOrchestrator:
     return BatchRefreshOrchestrator(
         market=MarketDataClient(http=get_http_client(request)),
         fundamentals=FundamentalDataClient(http=get_http_client(request)),
+        etl_runner=get_etl_runner(),
+        job_store=get_job_store(),
     )

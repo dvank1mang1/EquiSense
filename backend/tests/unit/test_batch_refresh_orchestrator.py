@@ -35,19 +35,34 @@ class _FakeFundamentals:
         return {"Symbol": ticker.upper()}
 
 
+class _FakeETL:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def run_technical(self, ticker: str):
+        self.calls.append(f"tech:{ticker.upper()}")
+        return Path("/tmp/tech.parquet")
+
+    def run_fundamental(self, ticker: str):
+        self.calls.append(f"fund:{ticker.upper()}")
+        return Path("/tmp/fund.parquet")
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_orchestrator_writes_status_and_lineage(tmp_path: Path) -> None:
     old_model_dir = settings.model_dir
     settings.model_dir = str(tmp_path / "models")
     try:
+        etl = _FakeETL()
         orchestrator = BatchRefreshOrchestrator(
             market=_FakeMarket(),
             fundamentals=_FakeFundamentals(),
+            etl_runner=etl,
             retry_attempts=1,
             retry_wait_sec=0.01,
         )
-        status_path, lineage_path = await orchestrator.run(["aapl", "msft"])
+        status_path, lineage_path = await orchestrator.run(["aapl", "msft"], run_etl=True)
 
         assert status_path.exists()
         assert lineage_path.exists()
@@ -62,5 +77,7 @@ async def test_orchestrator_writes_status_and_lineage(tmp_path: Path) -> None:
         row0 = json.loads(lines[0])
         assert row0["status"] == "ok"
         assert row0["ohlcv_rows"] == 1
+        assert row0["etl_status"] == "ok"
+        assert etl.calls == ["tech:AAPL", "fund:AAPL", "tech:MSFT", "fund:MSFT"]
     finally:
         settings.model_dir = old_model_dir

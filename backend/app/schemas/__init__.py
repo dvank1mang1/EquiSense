@@ -1,4 +1,5 @@
 from app.schemas.backtest import BacktestRequest, BacktestResponse, EquityPoint
+from app.schemas.common import ErrorBody, ErrorResponse
 from app.schemas.prediction import ModelComparisonResponse, PredictionResponse, ShapExplanation
 from app.schemas.stock import (
     CandleData,
@@ -22,4 +23,6 @@ __all__ = [
     "BacktestRequest",
     "BacktestResponse",
     "EquityPoint",
+    "ErrorBody",
+    "ErrorResponse",
 ]

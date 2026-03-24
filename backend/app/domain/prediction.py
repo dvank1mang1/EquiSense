@@ -14,3 +14,13 @@ class PredictionOutcome:
     signal: str | None
     confidence: float | None
     explanation: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class PredictionReadinessOutcome:
+    """Readiness snapshot for one ticker + model inference path."""
+
+    ticker: str
+    model_id: str
+    ready: bool
+    checks: dict[str, dict[str, Any]]

@@ -25,6 +25,14 @@ class DataValidationError(EquiSenseError):
     """Data artifact exists but violates schema/quality contract."""
 
 
+class BacktestInputError(EquiSenseError):
+    """Invalid or inconsistent input data for backtesting."""
+
+
+class BacktestDependencyError(EquiSenseError):
+    """Missing model/features/dependencies required for backtesting."""
+
+
 class DataProviderError(EquiSenseError):
     """Upstream data provider returned an error or unexpected payload."""
 

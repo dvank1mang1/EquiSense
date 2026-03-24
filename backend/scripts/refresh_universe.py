@@ -63,6 +63,7 @@ async def _run(args: argparse.Namespace) -> None:
             force_full=args.force_full,
             refresh_quote=not args.skip_quote,
             refresh_fundamentals=not args.skip_fundamentals,
+            run_etl=args.run_etl,
         )
         print(f"Status:  {status_path}")
         print(f"Lineage: {lineage_path}")
@@ -71,7 +72,9 @@ async def _run(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description="Refresh a ticker universe into local raw cache")
     p.add_argument("--tickers", type=str, default="", help="Comma-separated tickers")
-    p.add_argument("--tickers-file", type=str, default="", help="Path to file with one ticker per line")
+    p.add_argument(
+        "--tickers-file", type=str, default="", help="Path to file with one ticker per line"
+    )
     p.add_argument("--force-full", action="store_true", help="Force full OHLCV download")
     p.add_argument("--skip-quote", action="store_true", help="Do not refresh GLOBAL_QUOTE")
     p.add_argument(
@@ -79,10 +82,12 @@ def main() -> None:
     )
     p.add_argument("--retry-attempts", type=int, default=3)
     p.add_argument("--retry-wait-sec", type=float, default=2.0)
+    p.add_argument(
+        "--run-etl", action="store_true", help="Run technical+fundamental ETL per ticker"
+    )
     args = p.parse_args()
     asyncio.run(_run(args))
 
 
 if __name__ == "__main__":
     main()
-

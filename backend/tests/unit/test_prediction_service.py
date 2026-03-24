@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app.core.config import settings
 from app.domain.exceptions import FeatureDataMissingError, ModelArtifactMissingError
 from app.domain.identifiers import ModelId
 from app.features.constants import TECHNICAL_FEATURES
@@ -137,3 +138,39 @@ class TestPredictionServiceInference:
 
             with pytest.raises(FeatureDataMissingError, match="Missing feature columns"):
                 await svc.predict("AAPL", ModelId.MODEL_A)
+
+    @pytest.mark.asyncio
+    async def test_readiness_false_when_model_artifact_missing(self, tmp_path) -> None:
+        old_model_dir = settings.model_dir
+        settings.model_dir = str(tmp_path / "models")
+        try:
+            market = MagicMock()
+            store = MagicMock()
+            store.exists.side_effect = lambda ticker, f: f in ("technical", "fundamental")
+            store.path_for.side_effect = lambda ticker, f: (
+                tmp_path / "processed" / ticker / f"{f}.parquet"
+            )
+            store.build_combined.return_value = pd.DataFrame(
+                {"date": [pd.Timestamp("2024-01-05")], **{f: [0.1] for f in TECHNICAL_FEATURES}}
+            )
+
+            svc = PredictionService(market=market, features=store)
+
+            with patch("app.models.get_model_class") as gmc:
+
+                class _M:
+                    model_id = "model_a"
+                    feature_set = TECHNICAL_FEATURES
+
+                    def __init__(self) -> None:
+                        self.model_path = tmp_path / "models" / "model_a.joblib"
+
+                gmc.return_value = _M
+                out = await svc.readiness("AAPL", ModelId.MODEL_A)
+
+            assert out.ticker == "AAPL"
+            assert out.ready is False
+            assert out.checks["combined_features"]["ok"] is True
+            assert out.checks["model_artifact"]["ok"] is False
+        finally:
+            settings.model_dir = old_model_dir

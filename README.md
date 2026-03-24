@@ -89,6 +89,21 @@ npm run dev
 - Architecture decisions and migration triggers: `ARCHITECTURE_DECISIONS.md`
 - SLO/SLI baseline and error budget: `SLO.md`
 
+## Backtesting API (ready)
+
+- Single model backtest:
+  - `GET /api/v1/backtesting/{ticker}?model=model_d&start_date=2024-01-01&end_date=2024-12-31&initial_capital=10000`
+- Compare all models on the same period:
+  - `GET /api/v1/backtesting/{ticker}/compare?start_date=2024-01-01&end_date=2024-12-31`
+
+Quick local check:
+
+```bash
+cd backend
+uv run uvicorn main:app --reload
+# then open /docs and run backtesting endpoints
+```
+
 ## Disclaimer
 
 Проект разработан в образовательных целях. Не является торговым советником и не гарантирует прибыль.

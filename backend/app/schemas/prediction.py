@@ -61,3 +61,38 @@ class ShapExplanation(BaseModel):
     features: list[ShapFeature]
     base_value: float
     prediction: float
+
+
+class ReadinessCheck(BaseModel):
+    ok: bool
+    detail: str
+
+
+class EnsureReadyResponse(BaseModel):
+    ticker: str
+    model: str
+    before_ready: bool
+    after_ready: bool
+    changed: bool
+    run_id: str
+    status_path: str
+    lineage_path: str
+    checks_before: dict[str, ReadinessCheck]
+    checks_after: dict[str, ReadinessCheck]
+
+
+class PredictionStatusResponse(BaseModel):
+    ticker: str
+    model: str
+    ready: bool
+    recommended_action: str
+    checks: dict[str, ReadinessCheck]
+    freshness: dict[str, dict[str, object]]
+    latest_job: dict[str, object] | None = None
+
+
+class PredictionReadinessResponse(BaseModel):
+    ticker: str
+    model: str
+    ready: bool
+    checks: dict[str, ReadinessCheck]

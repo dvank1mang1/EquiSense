@@ -7,14 +7,16 @@ Routers stay thin; domain errors bubble up and are mapped to HTTP in the API lay
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pandas as pd
 
 from app.contracts.data_providers import MarketDataProvider
 from app.contracts.features import FeatureStorePort
+from app.data.persistence import fundamentals_json_path, ohlcv_parquet_path
 from app.domain.exceptions import FeatureDataMissingError, ModelArtifactMissingError
 from app.domain.identifiers import ModelId
-from app.domain.prediction import PredictionOutcome
+from app.domain.prediction import PredictionOutcome, PredictionReadinessOutcome
 
 
 class PredictionService:
@@ -25,6 +27,77 @@ class PredictionService:
     ) -> None:
         self._market = market
         self._features = features
+
+    async def readiness(self, ticker: str, model_id: ModelId) -> PredictionReadinessOutcome:
+        """Check whether inference dependencies are present and consistent."""
+        from app.models import get_model_class
+
+        sym = ticker.strip().upper()
+        model_cls = get_model_class(model_id)
+        instance = model_cls()
+
+        checks: dict[str, dict[str, str | bool]] = {}
+
+        raw_ohlcv = ohlcv_parquet_path(sym)
+        checks["raw_ohlcv"] = {
+            "ok": raw_ohlcv.exists(),
+            "detail": str(raw_ohlcv),
+        }
+        raw_fund = fundamentals_json_path(sym)
+        checks["raw_fundamentals"] = {
+            "ok": raw_fund.exists(),
+            "detail": str(raw_fund),
+        }
+
+        tech_exists = self._features.exists(sym, "technical")
+        fund_exists = self._features.exists(sym, "fundamental")
+        checks["processed_technical"] = {
+            "ok": tech_exists,
+            "detail": str(self._features.path_for(sym, "technical")),
+        }
+        checks["processed_fundamental"] = {
+            "ok": fund_exists,
+            "detail": str(self._features.path_for(sym, "fundamental")),
+        }
+
+        model_path = Path(instance.model_path)
+        checks["model_artifact"] = {
+            "ok": model_path.exists(),
+            "detail": str(model_path),
+        }
+
+        try:
+            combined = await asyncio.to_thread(self._features.build_combined, sym)
+            if combined.empty:
+                checks["combined_features"] = {"ok": False, "detail": "combined features are empty"}
+            else:
+                missing = [c for c in instance.feature_set if c not in combined.columns]
+                if missing:
+                    preview = ",".join(missing[:8])
+                    checks["combined_features"] = {
+                        "ok": False,
+                        "detail": f"missing required model columns: {preview}",
+                    }
+                else:
+                    checks["combined_features"] = {
+                        "ok": True,
+                        "detail": f"rows={len(combined)}",
+                    }
+        except Exception as e:  # noqa: BLE001
+            checks["combined_features"] = {"ok": False, "detail": str(e)}
+
+        required = (
+            "processed_technical",
+            "model_artifact",
+            "combined_features",
+        )
+        ready = all(bool(checks[k]["ok"]) for k in required)
+        return PredictionReadinessOutcome(
+            ticker=sym,
+            model_id=model_id.value,
+            ready=ready,
+            checks=checks,
+        )
 
     async def predict(self, ticker: str, model_id: ModelId) -> PredictionOutcome:
         """

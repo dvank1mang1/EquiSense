@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 from loguru import logger
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from app.contracts.data_providers import FundamentalDataProvider, MarketDataProvider
+from app.contracts.jobs import JobStore
 from app.core.config import settings
 from app.domain.exceptions import DataProviderError, UpstreamRateLimitError
+from app.jobs.store import FileJobStore
+
+
+class TickerETLRunner(Protocol):
+    def run_technical(self, ticker: str) -> Path: ...
+
+    def run_fundamental(self, ticker: str) -> Path: ...
 
 
 @dataclass
@@ -25,6 +33,8 @@ class TickerRefreshResult:
     last_ohlcv_date: str | None = None
     quote_price: float | None = None
     fundamentals_symbol: str | None = None
+    etl_status: str | None = None
+    etl_error: str | None = None
     error: str | None = None
 
 
@@ -38,15 +48,15 @@ def _jobs_dir() -> Path:
 
 
 def status_path_for_run(run_id: str) -> Path:
-    return _jobs_dir() / f"refresh_status_{run_id}.json"
+    return FileJobStore().status_path(run_id)
 
 
 def lineage_path_for_run(run_id: str) -> Path:
-    return _jobs_dir() / f"refresh_lineage_{run_id}.jsonl"
+    return FileJobStore().lineage_path(run_id)
 
 
 def metrics_path_for_run(run_id: str) -> Path:
-    return _jobs_dir() / f"refresh_metrics_{run_id}.json"
+    return FileJobStore().metrics_path(run_id)
 
 
 class BatchRefreshOrchestrator:
@@ -62,12 +72,16 @@ class BatchRefreshOrchestrator:
         self,
         market: MarketDataProvider,
         fundamentals: FundamentalDataProvider,
+        etl_runner: TickerETLRunner | None = None,
+        job_store: JobStore | None = None,
         *,
         retry_attempts: int = 3,
         retry_wait_sec: float = 2.0,
     ) -> None:
         self._market = market
         self._fundamentals = fundamentals
+        self._etl_runner = etl_runner
+        self._store = job_store or FileJobStore()
         self._retry_attempts = retry_attempts
         self._retry_wait_sec = retry_wait_sec
 
@@ -79,13 +93,11 @@ class BatchRefreshOrchestrator:
         force_full: bool = False,
         refresh_quote: bool = True,
         refresh_fundamentals: bool = True,
+        run_etl: bool = False,
     ) -> tuple[Path, Path]:
         run_id = run_id or datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
-        jobs_dir = _jobs_dir()
-        jobs_dir.mkdir(parents=True, exist_ok=True)
-        status_path = status_path_for_run(run_id)
-        lineage_path = lineage_path_for_run(run_id)
-        metrics_path = metrics_path_for_run(run_id)
+        status_path = self._store.status_path(run_id)
+        lineage_path = self._store.lineage_path(run_id)
         run_started_monotonic = time.monotonic()
 
         tickers_done = 0
@@ -100,16 +112,17 @@ class BatchRefreshOrchestrator:
             "failed": failed,
             "in_progress_ticker": None,
         }
-        status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
+        self._store.write_status(run_id, status)
 
         for ticker in tickers:
             status["in_progress_ticker"] = ticker
-            status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
+            self._store.write_status(run_id, status)
             result = await self._refresh_one(
                 ticker=ticker,
                 force_full=force_full,
                 refresh_quote=refresh_quote,
                 refresh_fundamentals=refresh_fundamentals,
+                run_etl=run_etl,
             )
             tickers_done += 1
             status["tickers_done"] = tickers_done
@@ -119,13 +132,12 @@ class BatchRefreshOrchestrator:
             else:
                 failed += 1
                 status["failed"] = failed
-            with lineage_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
-            status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
+            self._store.append_lineage_row(run_id, asdict(result))
+            self._store.write_status(run_id, status)
 
         status["finished_at"] = _utc_now_iso()
         status["in_progress_ticker"] = None
-        status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
+        self._store.write_status(run_id, status)
         metrics = {
             "run_id": run_id,
             "duration_sec": round(time.monotonic() - run_started_monotonic, 3),
@@ -135,7 +147,7 @@ class BatchRefreshOrchestrator:
             "success_rate": round(success / len(tickers), 4) if tickers else 0.0,
             "finished_at": _utc_now_iso(),
         }
-        metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        self._store.write_metrics(run_id, metrics)
         logger.bind(event="batch_refresh_run_finished", **metrics).info(
             "Batch refresh run finished"
         )
@@ -148,6 +160,7 @@ class BatchRefreshOrchestrator:
         force_full: bool,
         refresh_quote: bool,
         refresh_fundamentals: bool,
+        run_etl: bool,
     ) -> TickerRefreshResult:
         started = _utc_now_iso()
         started_monotonic = time.monotonic()
@@ -167,6 +180,21 @@ class BatchRefreshOrchestrator:
                 if isinstance(symbol, str):
                     fundamentals_symbol = symbol
 
+            etl_status: str | None = None
+            etl_error: str | None = None
+            if run_etl:
+                if self._etl_runner is None:
+                    etl_status = "skipped"
+                    etl_error = "etl runner is not configured"
+                else:
+                    try:
+                        await asyncio.to_thread(self._etl_runner.run_technical, ticker)
+                        await asyncio.to_thread(self._etl_runner.run_fundamental, ticker)
+                        etl_status = "ok"
+                    except Exception as etl_exc:  # noqa: BLE001
+                        etl_status = "error"
+                        etl_error = str(etl_exc)
+
             last_date: str | None = None
             if len(ohlcv):
                 last_date = str(ohlcv["date"].iloc[-1])[:10]
@@ -179,6 +207,8 @@ class BatchRefreshOrchestrator:
                 last_ohlcv_date=last_date,
                 quote_price=quote_price,
                 fundamentals_symbol=fundamentals_symbol,
+                etl_status=etl_status,
+                etl_error=etl_error,
             )
 
         try:

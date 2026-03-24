@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.jobs.batch_refresh import (
     BatchRefreshOrchestrator,
-    lineage_path_for_run,
-    metrics_path_for_run,
-    status_path_for_run,
 )
 from app.jobs.registry import InMemoryJobRegistry, get_job_registry
-from app.services.dependencies import get_batch_refresh_orchestrator
+from app.jobs.store import FileJobStore
+from app.services.dependencies import get_batch_refresh_orchestrator, get_job_store
 
 router = APIRouter()
 
@@ -25,6 +21,7 @@ class RefreshUniverseBody(BaseModel):
     force_full: bool = False
     refresh_quote: bool = True
     refresh_fundamentals: bool = True
+    run_etl: bool = False
     retry_attempts: int = Field(3, ge=1, le=10)
     retry_wait_sec: float = Field(2.0, ge=0.0, le=120.0)
     background: bool = True
@@ -45,6 +42,7 @@ async def _run_job(
         force_full=body.force_full,
         refresh_quote=body.refresh_quote,
         refresh_fundamentals=body.refresh_fundamentals,
+        run_etl=body.run_etl,
     )
     return str(status_path), str(lineage_path)
 
@@ -54,10 +52,13 @@ async def refresh_universe(
     body: RefreshUniverseBody,
     base_orchestrator: BatchRefreshOrchestrator = Depends(get_batch_refresh_orchestrator),
     registry: InMemoryJobRegistry = Depends(get_job_registry),
+    store: FileJobStore = Depends(get_job_store),
 ):
     orchestrator = BatchRefreshOrchestrator(
         market=base_orchestrator._market,  # controlled adaptation for per-run retry settings
         fundamentals=base_orchestrator._fundamentals,
+        etl_runner=base_orchestrator._etl_runner,
+        job_store=store,
         retry_attempts=body.retry_attempts,
         retry_wait_sec=body.retry_wait_sec,
     )
@@ -69,9 +70,9 @@ async def refresh_universe(
         return {
             "run_id": run_id,
             "status": "running",
-            "status_path": str(status_path_for_run(run_id)),
-            "lineage_path": str(lineage_path_for_run(run_id)),
-            "metrics_path": str(metrics_path_for_run(run_id)),
+            "status_path": str(store.status_path(run_id)),
+            "lineage_path": str(store.lineage_path(run_id)),
+            "metrics_path": str(store.metrics_path(run_id)),
         }
 
     status_path, lineage_path = await _run_job(orchestrator, body, run_id)
@@ -80,7 +81,7 @@ async def refresh_universe(
         "status": "completed",
         "status_path": status_path,
         "lineage_path": lineage_path,
-        "metrics_path": str(metrics_path_for_run(run_id)),
+        "metrics_path": str(store.metrics_path(run_id)),
     }
 
 
@@ -88,39 +89,39 @@ async def refresh_universe(
 async def get_refresh_universe_status(
     run_id: str,
     registry: InMemoryJobRegistry = Depends(get_job_registry),
+    store: FileJobStore = Depends(get_job_store),
 ):
-    path = status_path_for_run(run_id)
-    if not path.exists():
+    payload = store.read_status(run_id)
+    if payload is None:
         raise HTTPException(status_code=404, detail="Run id not found")
 
-    payload = json.loads(path.read_text(encoding="utf-8"))
     handle = registry.get(run_id)
     payload["runtime_status"] = handle.status if handle is not None else "completed"
     return payload
 
 
 @router.get("/refresh-universe/{run_id}/metrics")
-async def get_refresh_universe_metrics(run_id: str):
-    path = metrics_path_for_run(run_id)
-    if not path.exists():
+async def get_refresh_universe_metrics(
+    run_id: str,
+    store: FileJobStore = Depends(get_job_store),
+):
+    payload = store.read_metrics(run_id)
+    if payload is None:
         raise HTTPException(status_code=404, detail="Metrics for run id not found")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return payload
 
 
 @router.get("/refresh-universe/{run_id}/lineage")
 async def get_refresh_universe_lineage(
     run_id: str,
     limit: int = Query(100, ge=1, le=10000),
+    store: FileJobStore = Depends(get_job_store),
 ):
-    path = lineage_path_for_run(run_id)
-    if not path.exists():
+    rows = store.read_lineage(run_id, limit=limit)
+    if rows is None:
         raise HTTPException(status_code=404, detail="Lineage for run id not found")
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines()[:limit]:
-        if line.strip():
-            rows.append(json.loads(line))
     return {
         "run_id": run_id,
-        "lineage_path": str(path),
+        "lineage_path": str(store.lineage_path(run_id)),
         "rows": rows,
     }

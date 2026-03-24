@@ -35,3 +35,15 @@ class BacktestResponse(BaseModel):
     initial_capital: float
     metrics: BacktestMetrics
     equity_curve: list[EquityPoint]
+
+
+class BacktestCompareEntry(BaseModel):
+    model: str
+    ok: bool
+    metrics: BacktestMetrics | None = None
+    error: str | None = None
+
+
+class BacktestCompareResponse(BaseModel):
+    ticker: str
+    comparison: dict[str, BacktestCompareEntry]

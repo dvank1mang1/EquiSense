@@ -81,6 +81,7 @@ ignore = ["E501"]
 "app/services/prediction_service.py" = ["N806"]
 "app/models/*.py" = ["N803"]
 "app/explainability/*.py" = ["N803"]
+"scripts/*.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.11"

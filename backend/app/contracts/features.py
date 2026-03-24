@@ -1,5 +1,6 @@
 """Port for persisted engineered features (Parquet / DB / future online store)."""
 
+from pathlib import Path
 from typing import Protocol
 
 import pandas as pd
@@ -17,3 +18,5 @@ class FeatureStorePort(Protocol):
         ...
 
     def exists(self, ticker: str, feature_type: str) -> bool: ...
+
+    def path_for(self, ticker: str, feature_type: str) -> Path: ...

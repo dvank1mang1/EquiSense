@@ -38,6 +38,16 @@ class _FakeFundamentals:
         return {"Symbol": ticker.upper()}
 
 
+class _FakeETL:
+    def run_technical(self, ticker: str):
+        _ = ticker
+        return Path("/tmp/tech.parquet")
+
+    def run_fundamental(self, ticker: str):
+        _ = ticker
+        return Path("/tmp/fund.parquet")
+
+
 @pytest.mark.integration
 def test_refresh_universe_sync_job_and_status_endpoints(tmp_path: Path) -> None:
     from main import app
@@ -47,6 +57,7 @@ def test_refresh_universe_sync_job_and_status_endpoints(tmp_path: Path) -> None:
     app.dependency_overrides[get_batch_refresh_orchestrator] = lambda: BatchRefreshOrchestrator(
         market=_FakeMarket(),
         fundamentals=_FakeFundamentals(),
+        etl_runner=_FakeETL(),
         retry_attempts=1,
         retry_wait_sec=0.01,
     )
@@ -55,7 +66,7 @@ def test_refresh_universe_sync_job_and_status_endpoints(tmp_path: Path) -> None:
         client = TestClient(app)
         r = client.post(
             "/api/v1/jobs/refresh-universe",
-            json={"tickers": ["AAPL", "MSFT"], "background": False},
+            json={"tickers": ["AAPL", "MSFT"], "background": False, "run_etl": True},
         )
         assert r.status_code == 200
         payload = r.json()
@@ -73,6 +84,7 @@ def test_refresh_universe_sync_job_and_status_endpoints(tmp_path: Path) -> None:
         lineage = rl.json()["rows"]
         assert len(lineage) == 2
         assert {row["status"] for row in lineage} == {"ok"}
+        assert {row["etl_status"] for row in lineage} == {"ok"}
 
         rm = client.get(f"/api/v1/jobs/refresh-universe/{run_id}/metrics")
         assert rm.status_code == 200
