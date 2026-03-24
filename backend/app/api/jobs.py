@@ -7,9 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.contracts.jobs import JobStore
+from app.core.config import settings
 from app.jobs.batch_refresh import (
     BatchRefreshOrchestrator,
 )
+from app.jobs.queue import get_job_queue, safe_queue_status
 from app.jobs.registry import InMemoryJobRegistry, get_job_registry
 from app.services.dependencies import get_batch_refresh_orchestrator, get_job_store
 
@@ -65,11 +67,28 @@ async def refresh_universe(
     run_id = _new_run_id()
 
     if body.background:
-        task = asyncio.create_task(_run_job(orchestrator, body, run_id))
-        registry.register(run_id, task)
+        queue = get_job_queue()
+        if settings.job_queue_backend.lower() == "postgres":
+            queue.enqueue(
+                run_id,
+                {
+                    "tickers": [t.strip().upper() for t in body.tickers],
+                    "force_full": body.force_full,
+                    "refresh_quote": body.refresh_quote,
+                    "refresh_fundamentals": body.refresh_fundamentals,
+                    "run_etl": body.run_etl,
+                    "retry_attempts": body.retry_attempts,
+                    "retry_wait_sec": body.retry_wait_sec,
+                },
+            )
+            runtime_status = "queued"
+        else:
+            task = asyncio.create_task(_run_job(orchestrator, body, run_id))
+            registry.register(run_id, task)
+            runtime_status = "running"
         return {
             "run_id": run_id,
-            "status": "running",
+            "status": runtime_status,
             "status_path": str(store.status_path(run_id)),
             "lineage_path": str(store.lineage_path(run_id)),
             "metrics_path": str(store.metrics_path(run_id)),
@@ -96,7 +115,11 @@ async def get_refresh_universe_status(
         raise HTTPException(status_code=404, detail="Run id not found")
 
     handle = registry.get(run_id)
-    payload["runtime_status"] = handle.status if handle is not None else "completed"
+    queue_status = safe_queue_status(run_id)
+    if queue_status is not None:
+        payload["runtime_status"] = queue_status
+    else:
+        payload["runtime_status"] = handle.status if handle is not None else "completed"
     return payload
 
 

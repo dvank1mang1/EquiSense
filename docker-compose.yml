@@ -25,6 +25,7 @@ services:
       - .env
     environment:
       POSTGRES_HOST: postgres
+      JOB_QUEUE_BACKEND: postgres
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv
@@ -35,6 +36,25 @@ services:
       postgres:
         condition: service_healthy
     command: sh -lc "uv sync --frozen --no-dev && uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: equisense_worker
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      JOB_QUEUE_BACKEND: postgres
+    volumes:
+      - ./backend:/app
+      - worker_venv:/app/.venv
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -lc "uv sync --frozen --no-dev && uv run python scripts/job_worker.py --poll-sec 1.0"
 
   frontend:
     build:
@@ -56,3 +76,4 @@ services:
 volumes:
   postgres_data:
   backend_venv:
+  worker_venv:
