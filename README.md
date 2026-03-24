@@ -27,13 +27,17 @@ EquiSense/
 
 ## Быстрый старт
 
+### 0. Windows: рекомендуется WSL2
+
+Для **Docker Compose**, **GPU (CUDA через WSL)** и путей как в Linux удобнее держать репозиторий **внутри файловой системы WSL** (например `~/projects/EquiSense`), а не только на `C:` через `/mnt/c/`. IDE: **Remote – WSL**. Нативный Windows тоже возможен, но WSL2 обычно меньше сюрпризов с контейнерами и `uv`.
+
 ### 1. Клонировать и настроить окружение
 
 ```bash
 git clone <repo-url>
 cd EquiSense
 cp .env.example .env
-# Заполнить API ключи в .env
+# Заполнить API ключи в .env (Alpha Vantage; для новостей — Finnhub и/или NewsAPI)
 ```
 
 ### 2. Запустить через Docker
@@ -55,9 +59,16 @@ docker-compose up --build
 cd backend
 # при необходимости: curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --all-groups   # runtime + dev (pytest)
-uv run uvicorn main:app --reload
-# тесты: uv run pytest
-# quality: uv run ruff check . && uv run mypy app
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Проверки как в CI (из каталога `backend/`):
+
+```bash
+uv run ruff check app tests
+uv run ruff format --check app tests
+uv run mypy app/domain app/contracts app/services app/data
+uv run pytest tests -q
 ```
 
 Без dev-зависимостей: `uv sync`. Lockfile: `backend/uv.lock` (коммитить в git).
@@ -77,7 +88,8 @@ npm run dev
 |---|---|---|
 | Data Ingestion | `backend/app/data/` | Alpha Vantage, Finnhub, News API |
 | Feature Engineering | `backend/app/features/` | Technical, Fundamental, Sentiment |
-| ML Models | `backend/app/models/` | LR, RF, XGBoost, LightGBM, FinBERT |
+| ML Models | `backend/app/models/` | XGBoost / LightGBM классификаторы по слайсам фич |
+| NLP / Sentiment | `backend/app/features/sentiment.py` | FinBERT (ProsusAI/finbert), батч-инференс, без дообучения |
 | Backtesting | `backend/app/backtesting/` | Sharpe, Drawdown, Win Rate |
 | Explainability | `backend/app/explainability/` | SHAP, Feature Importance |
 | API | `backend/app/api/` | REST endpoints, WebSocket |
@@ -117,6 +129,22 @@ Operational switches:
 - `EXPERIMENT_STORE_BACKEND=postgres` enables persistent experiment registry.
 - `JOB_STORE_BACKEND=postgres` enables Postgres-backed job status/lineage/metrics.
 - `JOB_QUEUE_BACKEND=postgres` enables API-to-worker background queue.
+- `LIFECYCLE_STORE_BACKEND=postgres` persists champion promotions across API restarts.
+- `FINBERT_DEVICE=auto|cpu|cuda`, `FINBERT_BATCH_SIZE`, `FINBERT_MODEL_NAME` — настройки sentiment ETL (см. `.env.example`).
+
+### Новости и sentiment (FinBERT)
+
+- **Сырьё:** `data/raw/news/{TICKER}.json` (кэш из Finnhub/NewsAPI; каталог `data/raw/` в `.gitignore`).
+- **Обработка:** при batch ETL после technical + fundamental выполняется **`run_sentiment`** → `data/processed/{TICKER}/sentiment.parquet` (при отсутствии новостей — нулевые признаки, модель FinBERT не грузится).
+- **Обновить только кэш новостей (лёгкий HTTP):** `POST /api/v1/stocks/{ticker}/refresh` с телом `"news": true` (остальные флаги по необходимости).
+- **Полный конвейер (данные + ETL + опционально свежие новости):** `POST /api/v1/jobs/refresh-universe` с `"run_etl": true` и при необходимости `"refresh_news": true` (перед sentiment подтянет новости в `raw/news`). В фоне с `JOB_QUEUE_BACKEND=postgres` работу выполняет **`worker`** (`scripts/job_worker.py`).
+- **CLI:** из `backend/`:
+
+  ```bash
+  uv run python scripts/refresh_universe.py --tickers AAPL,MSFT --run-etl --refresh-news
+  ```
+
+На GPU (Linux/WSL2 с NVIDIA): задайте `FINBERT_DEVICE=cuda` или оставьте `auto`. Первый запуск скачает веса с Hugging Face.
 
 Worker operations API:
 

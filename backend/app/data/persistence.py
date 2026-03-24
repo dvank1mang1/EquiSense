@@ -38,6 +38,31 @@ def quote_json_path(ticker: str, *, root: Path | None = None) -> Path:
     return quotes_dir(root) / f"{ticker.upper()}.json"
 
 
+def news_json_path(ticker: str, *, root: Path | None = None) -> Path:
+    return data_root(root) / "raw" / "news" / f"{ticker.upper()}.json"
+
+
+def read_news_json_sync(ticker: str, *, root: Path | None = None) -> list[dict[str, Any]]:
+    path = news_json_path(ticker, root=root)
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        return cast(list[dict[str, Any]], data)
+    return []
+
+
+def write_news_json_sync(
+    ticker: str, items: list[dict[str, Any]], *, root: Path | None = None
+) -> Path:
+    path = news_json_path(ticker, root=root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(items, f, indent=2, ensure_ascii=False)
+    return path
+
+
 def read_ohlcv_parquet_sync(ticker: str, *, root: Path | None = None) -> pd.DataFrame | None:
     path = ohlcv_parquet_path(ticker, root=root)
     if not path.exists():

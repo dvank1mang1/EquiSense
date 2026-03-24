@@ -117,9 +117,11 @@ def get_job_store() -> JobStore:
 
 
 def get_batch_refresh_orchestrator(request: Request) -> BatchRefreshOrchestrator:
+    http = get_http_client(request)
     return BatchRefreshOrchestrator(
-        market=MarketDataClient(http=get_http_client(request)),
-        fundamentals=FundamentalDataClient(http=get_http_client(request)),
+        market=MarketDataClient(http=http),
+        fundamentals=FundamentalDataClient(http=http),
         etl_runner=get_etl_runner(),
         job_store=get_job_store(),
+        news=NewsDataClient(http=http),
     )

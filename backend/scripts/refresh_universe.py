@@ -22,6 +22,8 @@ load_dotenv(BACKEND_ROOT / ".env")
 
 from app.data.fundamental_data import FundamentalDataClient
 from app.data.market_data import MarketDataClient
+from app.data.news_data import NewsDataClient
+from app.etl.pipeline import RawToProcessedETL
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
 
 
@@ -52,9 +54,13 @@ async def _run(args: argparse.Namespace) -> None:
     async with httpx.AsyncClient(timeout=120.0) as http:
         market = MarketDataClient(http)
         fundamentals = FundamentalDataClient(http)
+        news = NewsDataClient(http)
+        etl_runner = RawToProcessedETL() if args.run_etl else None
         job = BatchRefreshOrchestrator(
             market=market,
             fundamentals=fundamentals,
+            etl_runner=etl_runner,
+            news=news,
             retry_attempts=args.retry_attempts,
             retry_wait_sec=args.retry_wait_sec,
         )
@@ -64,6 +70,7 @@ async def _run(args: argparse.Namespace) -> None:
             refresh_quote=not args.skip_quote,
             refresh_fundamentals=not args.skip_fundamentals,
             run_etl=args.run_etl,
+            refresh_news=args.refresh_news,
         )
         print(f"Status:  {status_path}")
         print(f"Lineage: {lineage_path}")
@@ -83,7 +90,14 @@ def main() -> None:
     p.add_argument("--retry-attempts", type=int, default=3)
     p.add_argument("--retry-wait-sec", type=float, default=2.0)
     p.add_argument(
-        "--run-etl", action="store_true", help="Run technical+fundamental ETL per ticker"
+        "--run-etl",
+        action="store_true",
+        help="Run technical+fundamental+sentiment(FinBERT) ETL per ticker",
+    )
+    p.add_argument(
+        "--refresh-news",
+        action="store_true",
+        help="With --run-etl, fetch news into raw/news before sentiment step",
     )
     args = p.parse_args()
     asyncio.run(_run(args))

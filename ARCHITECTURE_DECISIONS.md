@@ -15,7 +15,8 @@ This document captures intentional trade-offs for current architecture, plus mig
   - `data/raw/ohlcv/{TICKER}.parquet`
   - `data/raw/fundamentals/{TICKER}.json`
   - `data/raw/quotes/{TICKER}.json`
-  - `data/processed/{TICKER}/...` (feature store)
+  - `data/raw/news/{TICKER}.json` (headlines/snippets cache for sentiment ETL)
+  - `data/processed/{TICKER}/...` (feature store: `technical`, `fundamental`, `sentiment`, …)
 - **Risks:**
   - Concurrent writers require discipline.
   - Query flexibility is lower than SQL for ad-hoc analytics.
@@ -61,6 +62,19 @@ This document captures intentional trade-offs for current architecture, plus mig
   - `JOB_QUEUE_BACKEND=postgres`
   - `docker-compose` includes a separate `worker` service running `scripts/job_worker.py`.
 
+## ADR-005: FinBERT Sentiment as Offline Feature Engineering
+
+- **Status:** Accepted
+- **Date:** 2026-03-24
+- **Decision:** Run **ProsusAI/finbert** only inside the **ETL / batch** path (`run_sentiment`), not on synchronous prediction HTTP requests.
+- **Why now:**
+  - Keeps API latency predictable; GPU/CPU cost is bounded by batch jobs.
+  - No custom training loop — pretrained inference only, aligned with “ship fast, iterate later”.
+- **Implementation notes:**
+  - Raw news JSON under `data/raw/news/`; processed sentiment Parquet merged in `FeatureStore.build_combined`.
+  - Optional `refresh_news` on batch refresh to refill news cache before ETL.
+  - Config: `FINBERT_DEVICE`, `FINBERT_BATCH_SIZE`, `FINBERT_MODEL_NAME` (see `.env.example`).
+
 ## Migration Triggers (when to move beyond filesystem-only)
 
 Consider introducing stronger data infrastructure (Postgres metadata tables, object storage, warehouse, or orchestrator) when one or more triggers are true:
@@ -76,13 +90,13 @@ Consider introducing stronger data infrastructure (Postgres metadata tables, obj
 ### 30 days
 
 - Add batch downloader for ticker universe with resume/retry.
-- Auto-run ETL after successful raw refresh.
+- Auto-run ETL after successful raw refresh (including sentiment when `run_etl` + optional `refresh_news`). ✅ baseline
 - Enable pre-commit locally for all contributors.
 - Keep `uv.lock` and dependency hygiene stable.
 
 ### 60 days
 
-- Add worker heartbeat and dead-job requeue policy.
+- Worker heartbeat and dead-job requeue policy (Postgres queue). ✅ baseline
 - Add structured logs and basic metrics (success/fail/latency).
 - Introduce feature schema checks before model training.
 

@@ -30,6 +30,10 @@ class RefreshUniverseBody(BaseModel):
     refresh_quote: bool = True
     refresh_fundamentals: bool = True
     run_etl: bool = False
+    refresh_news: bool = Field(
+        False,
+        description="When run_etl=true, fetch news and refresh raw/news/{TICKER}.json before FinBERT sentiment ETL.",
+    )
     retry_attempts: int = Field(3, ge=1, le=10)
     retry_wait_sec: float = Field(2.0, ge=0.0, le=120.0)
     background: bool = True
@@ -51,6 +55,7 @@ async def _run_job(
         refresh_quote=body.refresh_quote,
         refresh_fundamentals=body.refresh_fundamentals,
         run_etl=body.run_etl,
+        refresh_news=body.refresh_news,
     )
     return str(status_path), str(lineage_path)
 
@@ -67,6 +72,7 @@ async def refresh_universe(
         fundamentals=base_orchestrator._fundamentals,
         etl_runner=base_orchestrator._etl_runner,
         job_store=store,
+        news=base_orchestrator._news,
         retry_attempts=body.retry_attempts,
         retry_wait_sec=body.retry_wait_sec,
     )
@@ -84,6 +90,7 @@ async def refresh_universe(
                     "refresh_quote": body.refresh_quote,
                     "refresh_fundamentals": body.refresh_fundamentals,
                     "run_etl": body.run_etl,
+                    "refresh_news": body.refresh_news,
                     "retry_attempts": body.retry_attempts,
                     "retry_wait_sec": body.retry_wait_sec,
                     "max_attempts": max(1, settings.job_queue_max_attempts),

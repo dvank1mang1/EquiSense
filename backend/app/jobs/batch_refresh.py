@@ -10,8 +10,13 @@ from typing import Protocol
 from loguru import logger
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_fixed
 
-from app.contracts.data_providers import FundamentalDataProvider, MarketDataProvider
+from app.contracts.data_providers import (
+    FundamentalDataProvider,
+    MarketDataProvider,
+    NewsDataProvider,
+)
 from app.contracts.jobs import JobStore
+from app.data.persistence import write_news_json_sync
 from app.domain.exceptions import DataProviderError, UpstreamRateLimitError
 from app.jobs.store import FileJobStore
 
@@ -20,6 +25,8 @@ class TickerETLRunner(Protocol):
     def run_technical(self, ticker: str) -> Path: ...
 
     def run_fundamental(self, ticker: str) -> Path: ...
+
+    def run_sentiment(self, ticker: str) -> Path: ...
 
 
 @dataclass
@@ -56,6 +63,7 @@ class BatchRefreshOrchestrator:
         fundamentals: FundamentalDataProvider,
         etl_runner: TickerETLRunner | None = None,
         job_store: JobStore | None = None,
+        news: NewsDataProvider | None = None,
         *,
         retry_attempts: int = 3,
         retry_wait_sec: float = 2.0,
@@ -63,6 +71,7 @@ class BatchRefreshOrchestrator:
         self._market = market
         self._fundamentals = fundamentals
         self._etl_runner = etl_runner
+        self._news = news
         self._store = job_store or FileJobStore()
         self._retry_attempts = retry_attempts
         self._retry_wait_sec = retry_wait_sec
@@ -76,6 +85,7 @@ class BatchRefreshOrchestrator:
         refresh_quote: bool = True,
         refresh_fundamentals: bool = True,
         run_etl: bool = False,
+        refresh_news: bool = False,
     ) -> tuple[Path, Path]:
         run_id = run_id or datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
         status_path = self._store.status_path(run_id)
@@ -105,6 +115,7 @@ class BatchRefreshOrchestrator:
                 refresh_quote=refresh_quote,
                 refresh_fundamentals=refresh_fundamentals,
                 run_etl=run_etl,
+                refresh_news=refresh_news,
             )
             tickers_done += 1
             status["tickers_done"] = tickers_done
@@ -143,6 +154,7 @@ class BatchRefreshOrchestrator:
         refresh_quote: bool,
         refresh_fundamentals: bool,
         run_etl: bool,
+        refresh_news: bool,
     ) -> TickerRefreshResult:
         started = _utc_now_iso()
         started_monotonic = time.monotonic()
@@ -169,9 +181,26 @@ class BatchRefreshOrchestrator:
                     etl_status = "skipped"
                     etl_error = "etl runner is not configured"
                 else:
+                    if refresh_news and self._news is not None:
+                        try:
+                            items = await self._news.get_recent(ticker, limit=200)
+
+                            def _write_news() -> None:
+                                write_news_json_sync(ticker, items)
+
+                            await asyncio.to_thread(_write_news)
+                        except Exception as news_exc:  # noqa: BLE001
+                            logger.bind(
+                                event="batch_refresh_news_cache_error",
+                                ticker=ticker.upper(),
+                                error=str(news_exc),
+                            ).warning(
+                                "Failed to refresh news cache; sentiment may use stale/empty file"
+                            )
                     try:
                         await asyncio.to_thread(self._etl_runner.run_technical, ticker)
                         await asyncio.to_thread(self._etl_runner.run_fundamental, ticker)
+                        await asyncio.to_thread(self._etl_runner.run_sentiment, ticker)
                         etl_status = "ok"
                     except Exception as etl_exc:  # noqa: BLE001
                         etl_status = "error"

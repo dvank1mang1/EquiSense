@@ -47,6 +47,10 @@ class _FakeETL:
         _ = ticker
         return Path("/tmp/fund.parquet")
 
+    def run_sentiment(self, ticker: str):
+        _ = ticker
+        return Path("/tmp/sent.parquet")
+
 
 @pytest.mark.integration
 def test_refresh_universe_sync_job_and_status_endpoints(tmp_path: Path) -> None:

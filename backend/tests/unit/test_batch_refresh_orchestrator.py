@@ -47,6 +47,10 @@ class _FakeETL:
         self.calls.append(f"fund:{ticker.upper()}")
         return Path("/tmp/fund.parquet")
 
+    def run_sentiment(self, ticker: str):
+        self.calls.append(f"sent:{ticker.upper()}")
+        return Path("/tmp/sent.parquet")
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
@@ -78,6 +82,13 @@ async def test_orchestrator_writes_status_and_lineage(tmp_path: Path) -> None:
         assert row0["status"] == "ok"
         assert row0["ohlcv_rows"] == 1
         assert row0["etl_status"] == "ok"
-        assert etl.calls == ["tech:AAPL", "fund:AAPL", "tech:MSFT", "fund:MSFT"]
+        assert etl.calls == [
+            "tech:AAPL",
+            "fund:AAPL",
+            "sent:AAPL",
+            "tech:MSFT",
+            "fund:MSFT",
+            "sent:MSFT",
+        ]
     finally:
         settings.model_dir = old_model_dir

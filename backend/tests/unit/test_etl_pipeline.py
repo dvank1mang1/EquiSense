@@ -63,3 +63,20 @@ class TestRawToProcessedETL:
         etl.run_fundamental("CCC")
         store = FeatureStore(data_root=isolated_data_root)
         assert store.exists("CCC", FeatureSlice.FUNDAMENTAL.value)
+
+    def test_run_sentiment_without_news_writes_neutral_sentiment_parquet(
+        self,
+        isolated_data_root: Path,
+        sample_ohlcv_df: pd.DataFrame,
+    ) -> None:
+        sample_ohlcv_df.to_parquet(
+            isolated_data_root / "raw" / "ohlcv" / "SND.parquet", index=False
+        )
+        etl = RawToProcessedETL(data_root=isolated_data_root)
+        etl.run_technical("SND")
+        etl.run_sentiment("SND")
+        store = FeatureStore(data_root=isolated_data_root)
+        assert store.exists("SND", FeatureSlice.SENTIMENT.value)
+        df = store.load("SND", FeatureSlice.SENTIMENT.value)
+        assert (df["news_count"] == 0).all()
+        assert "sentiment_score" in df.columns

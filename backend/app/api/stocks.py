@@ -9,7 +9,11 @@ from app.contracts.data_providers import (
     NewsDataProvider,
 )
 from app.data.periods import ohlcv_tail_by_period
-from app.data.persistence import list_cached_ohlcv_tickers, read_ohlcv_parquet
+from app.data.persistence import (
+    list_cached_ohlcv_tickers,
+    read_ohlcv_parquet,
+    write_news_json_sync,
+)
 from app.data.serialization import ohlcv_rows
 from app.data.utils import normalize_ticker
 from app.domain.exceptions import (
@@ -36,6 +40,10 @@ class StockRefreshBody(BaseModel):
     )
     fundamentals: bool = True
     quote: bool = True
+    news: bool = Field(
+        False,
+        description="Fetch headlines and cache under data/raw/news/{TICKER}.json (FinBERT runs in batch ETL, not here).",
+    )
 
 
 def _raise_http_from_data_error(e: Exception) -> None:
@@ -171,10 +179,17 @@ async def refresh_stock_data(
     body: StockRefreshBody,
     market: MarketDataProvider = Depends(get_market_data_provider),
     fundamental: FundamentalDataProvider = Depends(get_fundamental_data_provider),
+    news: NewsDataProvider = Depends(get_news_data_provider),
 ):
     """Принудительное обновление кэшей OHLCV / фундаментала / котировки (с учётом rate limit)."""
     sym = normalize_ticker(ticker)
-    result: dict[str, Any] = {"ticker": sym, "ohlcv": None, "fundamentals": None, "quote": None}
+    result: dict[str, Any] = {
+        "ticker": sym,
+        "ohlcv": None,
+        "fundamentals": None,
+        "quote": None,
+        "news": None,
+    }
 
     if body.ohlcv:
         try:
@@ -198,6 +213,14 @@ async def refresh_stock_data(
         except DataProviderConfigError as e:
             result["quote"] = None
             result["quote_error"] = str(e)
+        except (DataProviderError, UpstreamRateLimitError) as e:
+            _raise_http_from_data_error(e)
+
+    if body.news:
+        try:
+            items = await news.get_recent(ticker, limit=100)
+            path = write_news_json_sync(sym, items)
+            result["news"] = {"cached_path": str(path), "count": len(items)}
         except (DataProviderError, UpstreamRateLimitError) as e:
             _raise_http_from_data_error(e)
 

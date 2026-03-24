@@ -62,9 +62,9 @@ Alternative data features:
 	•	Random Forest
 	•	XGBoost / LightGBM (основная модель)
 NLP (DL):
-	•	FinBERT:
-	•	анализ новостей
-	•	генерация sentiment features
+	•	FinBERT (ProsusAI/finbert):
+	•	анализ новостей в **offline ETL** → Parquet `sentiment` в feature store (см. `README.md`, `ARCHITECTURE_DECISIONS.md` ADR-005)
+	•	генерация sentiment features для combined-фрейма моделей C/D
 
 5. 🎯 Prediction Engine
 Система должна:

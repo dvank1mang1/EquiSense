@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # ML
     model_dir: str = "data/models"
     random_seed: int = 42
+    # FinBERT sentiment (ProsusAI/finbert) — inference only, no fine-tuning
+    finbert_model_name: str = "ProsusAI/finbert"
+    # auto | cpu | cuda
+    finbert_device: str = "auto"
+    finbert_batch_size: int = 16
 
     # CORS
     allowed_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]

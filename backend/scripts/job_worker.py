@@ -19,6 +19,7 @@ load_dotenv(BACKEND_ROOT / ".env")
 from app.core.config import settings
 from app.data.fundamental_data import FundamentalDataClient
 from app.data.market_data import MarketDataClient
+from app.data.news_data import NewsDataClient
 from app.etl.pipeline import RawToProcessedETL
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
 from app.jobs.queue import PostgresJobQueue
@@ -42,6 +43,7 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
         fundamentals=FundamentalDataClient(http=http),
         etl_runner=RawToProcessedETL(),
         job_store=_job_store(),
+        news=NewsDataClient(http=http),
         retry_attempts=int(payload.get("retry_attempts", 3)),
         retry_wait_sec=float(payload.get("retry_wait_sec", 2.0)),
     )
@@ -61,6 +63,7 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
             refresh_quote=bool(payload.get("refresh_quote", True)),
             refresh_fundamentals=bool(payload.get("refresh_fundamentals", True)),
             run_etl=bool(payload.get("run_etl", False)),
+            refresh_news=bool(payload.get("refresh_news", False)),
         )
         await asyncio.to_thread(queue.mark_completed, item.run_id)
     except asyncio.CancelledError:
