@@ -136,7 +136,9 @@ class BatchRefreshOrchestrator:
             "finished_at": _utc_now_iso(),
         }
         metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-        logger.bind(event="batch_refresh_run_finished", **metrics).info("Batch refresh run finished")
+        logger.bind(event="batch_refresh_run_finished", **metrics).info(
+            "Batch refresh run finished"
+        )
         return status_path, lineage_path
 
     async def _refresh_one(
