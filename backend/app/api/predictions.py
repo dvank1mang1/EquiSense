@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from app.contracts.jobs import JobStore
 from app.domain.exceptions import (
     FeatureDataMissingError,
     ModelArtifactMissingError,
@@ -12,7 +14,6 @@ from app.domain.exceptions import (
 )
 from app.domain.identifiers import ModelId
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
-from app.jobs.store import FileJobStore
 from app.schemas.prediction import (
     EnsureReadyResponse,
     PredictionReadinessResponse,
@@ -216,7 +217,7 @@ async def get_prediction_status(
         description="Registered model id (model_a … model_d).",
     ),
     service: PredictionService = Depends(get_prediction_service),
-    store: FileJobStore = Depends(get_job_store),
+    store: JobStore = Depends(get_job_store),
 ):
     """
     Operational status for one ticker in one response:
@@ -239,6 +240,7 @@ async def get_prediction_status(
         k: ReadinessCheck(ok=bool(v.get("ok", False)), detail=str(v.get("detail", "")))
         for k, v in checks.items()
     }
+    latest_job = await asyncio.to_thread(store.latest_lineage_for_ticker, out.ticker)
     return PredictionStatusResponse(
         ticker=out.ticker,
         model=out.model_id,
@@ -246,5 +248,5 @@ async def get_prediction_status(
         recommended_action=_recommended_action(ready=out.ready, checks=checks),
         checks=checks_model,
         freshness=freshness,
-        latest_job=store.latest_lineage_for_ticker(out.ticker),
+        latest_job=latest_job,
     )

@@ -8,6 +8,7 @@ from app.contracts.data_providers import (
     NewsDataProvider,
 )
 from app.contracts.features import FeatureStorePort
+from app.contracts.jobs import JobStore
 from app.core.config import settings
 from app.core.database import engine
 from app.data.fundamental_data import FundamentalDataClient
@@ -16,7 +17,7 @@ from app.data.news_data import NewsDataClient
 from app.etl.pipeline import RawToProcessedETL
 from app.features.feature_store import FeatureStore
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
-from app.jobs.store import FileJobStore
+from app.jobs.store import FileJobStore, PostgresJobStore, ResilientJobStore
 from app.services.backtesting_service import BacktestingService
 from app.services.experiment_store import (
     ExperimentStore,
@@ -36,6 +37,13 @@ if settings.experiment_store_backend.lower() == "postgres":
     )
 else:
     _experiment_store = _memory_experiment_store
+
+_file_job_store = FileJobStore()
+_job_store: JobStore
+if settings.job_store_backend.lower() == "postgres":
+    _job_store = ResilientJobStore(primary=PostgresJobStore(), fallback=_file_job_store)
+else:
+    _job_store = _file_job_store
 
 
 def get_http_client(request: Request):
@@ -87,8 +95,8 @@ def get_etl_runner() -> RawToProcessedETL:
     return RawToProcessedETL()
 
 
-def get_job_store() -> FileJobStore:
-    return FileJobStore()
+def get_job_store() -> JobStore:
+    return _job_store
 
 
 def get_batch_refresh_orchestrator(request: Request) -> BatchRefreshOrchestrator:

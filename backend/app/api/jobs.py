@@ -6,11 +6,11 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.contracts.jobs import JobStore
 from app.jobs.batch_refresh import (
     BatchRefreshOrchestrator,
 )
 from app.jobs.registry import InMemoryJobRegistry, get_job_registry
-from app.jobs.store import FileJobStore
 from app.services.dependencies import get_batch_refresh_orchestrator, get_job_store
 
 router = APIRouter()
@@ -52,7 +52,7 @@ async def refresh_universe(
     body: RefreshUniverseBody,
     base_orchestrator: BatchRefreshOrchestrator = Depends(get_batch_refresh_orchestrator),
     registry: InMemoryJobRegistry = Depends(get_job_registry),
-    store: FileJobStore = Depends(get_job_store),
+    store: JobStore = Depends(get_job_store),
 ):
     orchestrator = BatchRefreshOrchestrator(
         market=base_orchestrator._market,  # controlled adaptation for per-run retry settings
@@ -89,9 +89,9 @@ async def refresh_universe(
 async def get_refresh_universe_status(
     run_id: str,
     registry: InMemoryJobRegistry = Depends(get_job_registry),
-    store: FileJobStore = Depends(get_job_store),
+    store: JobStore = Depends(get_job_store),
 ):
-    payload = store.read_status(run_id)
+    payload = await asyncio.to_thread(store.read_status, run_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Run id not found")
 
@@ -103,9 +103,9 @@ async def get_refresh_universe_status(
 @router.get("/refresh-universe/{run_id}/metrics")
 async def get_refresh_universe_metrics(
     run_id: str,
-    store: FileJobStore = Depends(get_job_store),
+    store: JobStore = Depends(get_job_store),
 ):
-    payload = store.read_metrics(run_id)
+    payload = await asyncio.to_thread(store.read_metrics, run_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Metrics for run id not found")
     return payload
@@ -115,9 +115,9 @@ async def get_refresh_universe_metrics(
 async def get_refresh_universe_lineage(
     run_id: str,
     limit: int = Query(100, ge=1, le=10000),
-    store: FileJobStore = Depends(get_job_store),
+    store: JobStore = Depends(get_job_store),
 ):
-    rows = store.read_lineage(run_id, limit=limit)
+    rows = await asyncio.to_thread(store.read_lineage, run_id, limit)
     if rows is None:
         raise HTTPException(status_code=404, detail="Lineage for run id not found")
     return {

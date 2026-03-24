@@ -12,7 +12,6 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 
 from app.contracts.data_providers import FundamentalDataProvider, MarketDataProvider
 from app.contracts.jobs import JobStore
-from app.core.config import settings
 from app.domain.exceptions import DataProviderError, UpstreamRateLimitError
 from app.jobs.store import FileJobStore
 
@@ -40,23 +39,6 @@ class TickerRefreshResult:
 
 def _utc_now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
-
-
-def _jobs_dir() -> Path:
-    # Keep operational job artifacts next to other local data folders.
-    return Path(settings.model_dir).resolve().parent / "jobs"
-
-
-def status_path_for_run(run_id: str) -> Path:
-    return FileJobStore().status_path(run_id)
-
-
-def lineage_path_for_run(run_id: str) -> Path:
-    return FileJobStore().lineage_path(run_id)
-
-
-def metrics_path_for_run(run_id: str) -> Path:
-    return FileJobStore().metrics_path(run_id)
 
 
 class BatchRefreshOrchestrator:
@@ -112,11 +94,11 @@ class BatchRefreshOrchestrator:
             "failed": failed,
             "in_progress_ticker": None,
         }
-        self._store.write_status(run_id, status)
+        await asyncio.to_thread(self._store.write_status, run_id, status)
 
         for ticker in tickers:
             status["in_progress_ticker"] = ticker
-            self._store.write_status(run_id, status)
+            await asyncio.to_thread(self._store.write_status, run_id, status)
             result = await self._refresh_one(
                 ticker=ticker,
                 force_full=force_full,
@@ -132,12 +114,12 @@ class BatchRefreshOrchestrator:
             else:
                 failed += 1
                 status["failed"] = failed
-            self._store.append_lineage_row(run_id, asdict(result))
-            self._store.write_status(run_id, status)
+            await asyncio.to_thread(self._store.append_lineage_row, run_id, asdict(result))
+            await asyncio.to_thread(self._store.write_status, run_id, status)
 
         status["finished_at"] = _utc_now_iso()
         status["in_progress_ticker"] = None
-        self._store.write_status(run_id, status)
+        await asyncio.to_thread(self._store.write_status, run_id, status)
         metrics = {
             "run_id": run_id,
             "duration_sec": round(time.monotonic() - run_started_monotonic, 3),
@@ -147,7 +129,7 @@ class BatchRefreshOrchestrator:
             "success_rate": round(success / len(tickers), 4) if tickers else 0.0,
             "finished_at": _utc_now_iso(),
         }
-        self._store.write_metrics(run_id, metrics)
+        await asyncio.to_thread(self._store.write_metrics, run_id, metrics)
         logger.bind(event="batch_refresh_run_finished", **metrics).info(
             "Batch refresh run finished"
         )

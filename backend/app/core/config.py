@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     postgres_user: str = "postgres"
     postgres_password: str = "postgres"
     experiment_store_backend: str = "memory"
+    job_store_backend: str = "file"
 
     @property
     def database_url(self) -> str:
