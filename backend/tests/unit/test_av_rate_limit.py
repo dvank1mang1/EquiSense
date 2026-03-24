@@ -1,6 +1,3 @@
-import asyncio
-import time
-
 import pytest
 
 from app.data.av_rate_limit import AsyncIntervalRateLimiter
@@ -18,7 +15,6 @@ async def test_rate_limiter_spaces_calls(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(mod.asyncio, "sleep", fake_sleep)
     lim = AsyncIntervalRateLimiter(min_interval_sec=1.0)
-    t0 = time.monotonic()
     await lim.acquire()
     await lim.acquire()
     assert len(sleeps) == 1

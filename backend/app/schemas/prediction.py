@@ -1,9 +1,10 @@
-from pydantic import BaseModel
-from typing import Any, Optional
-from enum import Enum
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 
-class Signal(str, Enum):
+class Signal(StrEnum):
     STRONG_BUY = "Strong Buy"
     BUY = "Buy"
     HOLD = "Hold"
@@ -17,24 +18,30 @@ class FeatureContribution(BaseModel):
 
 
 class PredictionResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     ticker: str
     model: str
-    signal: Optional[Signal] = None
-    probability: Optional[float] = None
-    confidence: Optional[float] = None
+    signal: Signal | None = None
+    probability: float | None = None
+    confidence: float | None = None
     # Pipeline status, SHAP summary, or bucketed contributions (see FeatureContribution when stable)
     explanation: dict[str, Any] | None = None
 
 
 class ModelMetrics(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     model_id: str
-    signal: Optional[Signal] = None
-    probability: Optional[float] = None
-    f1: Optional[float] = None
-    roc_auc: Optional[float] = None
+    signal: Signal | None = None
+    probability: float | None = None
+    f1: float | None = None
+    roc_auc: float | None = None
 
 
 class ModelComparisonResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     ticker: str
     model_a: ModelMetrics
     model_b: ModelMetrics

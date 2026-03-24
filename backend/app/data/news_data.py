@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 from typing import Any
 
 import httpx
@@ -55,9 +55,9 @@ class NewsDataClient:
         for item in raw[:limit]:
             ts = item.get("datetime")
             if isinstance(ts, (int, float)):
-                from datetime import datetime, timezone
+                from datetime import datetime
 
-                published = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+                published = datetime.fromtimestamp(ts, tz=UTC).isoformat()
             else:
                 published = ""
             out.append(
@@ -72,7 +72,7 @@ class NewsDataClient:
         return out
 
     async def _from_newsapi(self, sym: str, limit: int) -> list[dict]:
-        params = {
+        params: dict[str, str | int] = {
             "q": sym,
             "sortBy": "publishedAt",
             "language": "en",

@@ -9,9 +9,17 @@ async def list_models():
     return {
         "models": [
             {"id": "model_a", "name": "Technical Only", "features": ["technical"]},
-            {"id": "model_b", "name": "Technical + Fundamental", "features": ["technical", "fundamental"]},
+            {
+                "id": "model_b",
+                "name": "Technical + Fundamental",
+                "features": ["technical", "fundamental"],
+            },
             {"id": "model_c", "name": "Technical + News", "features": ["technical", "news"]},
-            {"id": "model_d", "name": "All Features", "features": ["technical", "fundamental", "news"]},
+            {
+                "id": "model_d",
+                "name": "All Features",
+                "features": ["technical", "fundamental", "news"],
+            },
         ]
     }
 

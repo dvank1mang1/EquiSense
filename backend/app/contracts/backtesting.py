@@ -14,5 +14,4 @@ class BacktestRunner(Protocol):
         predictions_df: pd.DataFrame,
         ticker: str,
         model_id: str,
-    ) -> BacktestResult:
-        ...
+    ) -> BacktestResult: ...

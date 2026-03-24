@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
 import joblib
+import numpy as np
+import pandas as pd
+
 from app.core.config import settings
 
 
@@ -34,7 +36,8 @@ class BaseMLModel(ABC):
 
     def evaluate(self, X: pd.DataFrame, y: pd.Series) -> dict:
         """Рассчитать метрики: F1, ROC-AUC, Precision, Recall."""
-        from sklearn.metrics import f1_score, roc_auc_score, precision_score, recall_score
+        from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
+
         y_pred = self.predict(X)
         y_proba = self.predict_proba(X)[:, 1]
         return {

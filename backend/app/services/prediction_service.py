@@ -76,11 +76,11 @@ class PredictionService:
         confidence = abs(probability - 0.5) * 2.0
 
         as_of = X_last["date"].iloc[0] if "date" in X_last.columns else None
-        as_of_s = (
-            as_of.isoformat()
-            if hasattr(as_of, "isoformat")
-            else (str(as_of) if as_of is not None else None)
-        )
+        if as_of is None:
+            as_of_s: str | None = None
+        else:
+            iso = getattr(as_of, "isoformat", None)
+            as_of_s = str(iso()) if callable(iso) else str(as_of)
 
         _ = self._market  # будущий fallback: пересчёт фич из raw OHLCV при отсутствии combined
 

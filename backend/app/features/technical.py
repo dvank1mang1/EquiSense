@@ -52,9 +52,7 @@ class TechnicalFeatureEngineer:
         rs = avg_gain / avg_loss.replace(0, np.nan)
         return 100 - (100 / (1 + rs))
 
-    def _compute_macd(
-        self, series: pd.Series
-    ) -> tuple[pd.Series, pd.Series, pd.Series]:
+    def _compute_macd(self, series: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
         ema12 = series.ewm(span=12, adjust=False).mean()
         ema26 = series.ewm(span=26, adjust=False).mean()
         macd_line = ema12 - ema26

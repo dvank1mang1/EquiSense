@@ -1,0 +1,40 @@
+name: backend-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: latest
+
+      - name: Set Python
+        run: uv python install 3.11
+
+      - name: Sync deps
+        run: uv sync --all-groups
+
+      - name: Ruff check
+        run: uv run ruff check app tests
+
+      - name: Ruff format check
+        run: uv run ruff format --check app tests
+
+      - name: MyPy
+        run: uv run mypy app/domain app/contracts app/services app/data
+
+      - name: Pytest
+        run: uv run pytest tests -q

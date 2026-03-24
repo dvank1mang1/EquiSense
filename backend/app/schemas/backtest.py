@@ -1,13 +1,13 @@
-from pydantic import BaseModel
-from typing import Optional
 from datetime import date
+
+from pydantic import BaseModel
 
 
 class BacktestRequest(BaseModel):
     ticker: str
     model: str = "model_d"
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
+    start_date: date | None = None
+    end_date: date | None = None
     initial_capital: float = 10000.0
 
 
@@ -15,7 +15,7 @@ class EquityPoint(BaseModel):
     date: date
     equity: float
     return_pct: float
-    benchmark_equity: Optional[float] = None
+    benchmark_equity: float | None = None
 
 
 class BacktestMetrics(BaseModel):

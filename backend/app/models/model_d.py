@@ -1,5 +1,5 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 from app.features.constants import FUNDAMENTAL_FEATURES, SENTIMENT_FEATURES, TECHNICAL_FEATURES
 from app.models.base import BaseMLModel
@@ -19,6 +19,7 @@ class ModelD(BaseMLModel):
     def __init__(self):
         super().__init__()
         from xgboost import XGBClassifier
+
         self.model = XGBClassifier(
             n_estimators=400,
             max_depth=5,

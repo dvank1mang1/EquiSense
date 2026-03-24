@@ -4,8 +4,6 @@ from typing import Any
 
 import pandas as pd
 
-from app.features.constants import FUNDAMENTAL_FEATURES
-
 
 def _parse_float(raw: Any) -> float | None:
     if raw is None:
@@ -29,7 +27,9 @@ class FundamentalFeatureEngineer:
     Формирует фундаментальные признаки из Alpha Vantage OVERVIEW.
     """
 
-    def compute(self, overview: dict, income_df: pd.DataFrame | None = None) -> dict[str, float | None]:
+    def compute(
+        self, overview: dict, income_df: pd.DataFrame | None = None
+    ) -> dict[str, float | None]:
         _ = income_df
         pe = _parse_float(
             overview.get("PERatio") or overview.get("PERatioTTM") or overview.get("PE")

@@ -57,6 +57,7 @@ cd backend
 uv sync --all-groups   # runtime + dev (pytest)
 uv run uvicorn main:app --reload
 # тесты: uv run pytest
+# quality: uv run ruff check . && uv run mypy app
 ```
 
 Без dev-зависимостей: `uv sync`. Lockfile: `backend/uv.lock` (коммитить в git).
@@ -80,6 +81,13 @@ npm run dev
 | Backtesting | `backend/app/backtesting/` | Sharpe, Drawdown, Win Rate |
 | Explainability | `backend/app/explainability/` | SHAP, Feature Importance |
 | API | `backend/app/api/` | REST endpoints, WebSocket |
+
+## Engineering quality gates
+
+- Pre-commit hooks: `pre-commit install` (from repo root)
+- Backend CI: `.github/workflows/backend-ci.yml` (ruff + mypy + pytest)
+- Architecture decisions and migration triggers: `ARCHITECTURE_DECISIONS.md`
+- SLO/SLI baseline and error budget: `SLO.md`
 
 ## Disclaimer
 

@@ -35,8 +35,7 @@ class MarketDataProvider(Protocol):
 class FundamentalDataProvider(Protocol):
     """Company fundamentals as a snapshot dict (Alpha Vantage OVERVIEW-shaped)."""
 
-    async def get_snapshot(self, ticker: str, *, force: bool = False) -> dict:
-        ...
+    async def get_snapshot(self, ticker: str, *, force: bool = False) -> dict: ...
 
 
 class NewsDataProvider(Protocol):

@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Query
-from typing import Optional
 
 router = APIRouter()
 
@@ -7,9 +6,9 @@ router = APIRouter()
 @router.get("/{ticker}")
 async def run_backtest(
     ticker: str,
-    model: Optional[str] = Query("model_d"),
-    start_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    model: str | None = Query("model_d"),
+    start_date: str | None = Query(None, description="YYYY-MM-DD"),
+    end_date: str | None = Query(None, description="YYYY-MM-DD"),
     initial_capital: float = Query(10000.0, ge=100),
 ):
     """
@@ -34,8 +33,8 @@ async def run_backtest(
 @router.get("/{ticker}/compare")
 async def compare_backtest_models(
     ticker: str,
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
+    start_date: str | None = Query(None),
+    end_date: str | None = Query(None),
 ):
     """Сравнение backtesting результатов всех 4 моделей."""
     return {

@@ -1,6 +1,6 @@
-from pydantic import BaseModel
-from typing import Optional
 from datetime import date
+
+from pydantic import BaseModel
 
 
 class CandleData(BaseModel):
@@ -24,8 +24,8 @@ class StockPrice(BaseModel):
 class StockOverview(BaseModel):
     ticker: str
     name: str
-    sector: Optional[str] = None
-    market_cap: Optional[float] = None
+    sector: str | None = None
+    market_cap: float | None = None
     price: float
     change_pct: float
 
@@ -35,33 +35,33 @@ class NewsItem(BaseModel):
     source: str
     url: str
     published_at: str
-    sentiment: Optional[str] = None
-    sentiment_score: Optional[float] = None
+    sentiment: str | None = None
+    sentiment_score: float | None = None
 
 
 class TechnicalIndicators(BaseModel):
     ticker: str
     date: date
-    rsi: Optional[float] = None
-    macd: Optional[float] = None
-    macd_signal: Optional[float] = None
-    macd_hist: Optional[float] = None
-    sma_20: Optional[float] = None
-    sma_50: Optional[float] = None
-    sma_200: Optional[float] = None
-    bb_upper: Optional[float] = None
-    bb_lower: Optional[float] = None
-    bb_mid: Optional[float] = None
-    momentum: Optional[float] = None
-    volatility: Optional[float] = None
+    rsi: float | None = None
+    macd: float | None = None
+    macd_signal: float | None = None
+    macd_hist: float | None = None
+    sma_20: float | None = None
+    sma_50: float | None = None
+    sma_200: float | None = None
+    bb_upper: float | None = None
+    bb_lower: float | None = None
+    bb_mid: float | None = None
+    momentum: float | None = None
+    volatility: float | None = None
 
 
 class FundamentalMetrics(BaseModel):
     ticker: str
-    pe_ratio: Optional[float] = None
-    eps: Optional[float] = None
-    revenue_growth: Optional[float] = None
-    roe: Optional[float] = None
-    debt_to_equity: Optional[float] = None
-    market_cap: Optional[float] = None
-    dividend_yield: Optional[float] = None
+    pe_ratio: float | None = None
+    eps: float | None = None
+    revenue_growth: float | None = None
+    roe: float | None = None
+    debt_to_equity: float | None = None
+    market_cap: float | None = None
+    dividend_yield: float | None = None

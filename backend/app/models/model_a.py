@@ -1,6 +1,5 @@
-import pandas as pd
 import numpy as np
-from sklearn.ensemble import GradientBoostingClassifier
+import pandas as pd
 
 from app.features.constants import TECHNICAL_FEATURES
 from app.models.base import BaseMLModel
@@ -20,6 +19,7 @@ class ModelA(BaseMLModel):
     def __init__(self):
         super().__init__()
         from xgboost import XGBClassifier
+
         self.model = XGBClassifier(
             n_estimators=200,
             max_depth=4,

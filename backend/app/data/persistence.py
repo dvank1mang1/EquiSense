@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 
@@ -81,16 +82,14 @@ async def read_fundamentals_json(ticker: str, *, root: Path | None = None) -> di
     if not path.exists():
         return None
 
-    def _read() -> dict:
+    def _read() -> dict[str, Any]:
         with path.open(encoding="utf-8") as f:
-            return json.load(f)
+            return cast(dict[str, Any], json.load(f))
 
     return await asyncio.to_thread(_read)
 
 
-async def write_fundamentals_json(
-    ticker: str, payload: dict, *, root: Path | None = None
-) -> Path:
+async def write_fundamentals_json(ticker: str, payload: dict, *, root: Path | None = None) -> Path:
     path = fundamentals_json_path(ticker, root=root)
     path.parent.mkdir(parents=True, exist_ok=True)
 

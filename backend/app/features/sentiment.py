@@ -34,7 +34,9 @@ class SentimentFeatureEngineer:
         """Batch inference для списка текстов."""
         raise NotImplementedError
 
-    def compute(self, news_list: list[dict], price_dates: pd.DatetimeIndex, window: int = 3) -> pd.DataFrame:
+    def compute(
+        self, news_list: list[dict], price_dates: pd.DatetimeIndex, window: int = 3
+    ) -> pd.DataFrame:
         """
         Агрегировать sentiment по датам для создания временного ряда признаков.
 

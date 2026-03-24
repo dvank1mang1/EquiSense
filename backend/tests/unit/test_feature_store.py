@@ -11,7 +11,9 @@ from app.features.feature_store import FeatureStore
 
 @pytest.mark.unit
 class TestFeatureStore:
-    def test_save_load_roundtrip_technical(self, isolated_data_root, sample_ohlcv_df: pd.DataFrame) -> None:
+    def test_save_load_roundtrip_technical(
+        self, isolated_data_root, sample_ohlcv_df: pd.DataFrame
+    ) -> None:
         store = FeatureStore(data_root=isolated_data_root)
         df = sample_ohlcv_df.copy()
         df["returns"] = df["close"].pct_change()
@@ -22,7 +24,9 @@ class TestFeatureStore:
 
     def test_exists_after_save(self, isolated_data_root) -> None:
         store = FeatureStore(data_root=isolated_data_root)
-        df = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=3, freq="D"), "x": [1, 2, 3]})
+        df = pd.DataFrame(
+            {"date": pd.date_range("2024-01-01", periods=3, freq="D"), "x": [1, 2, 3]}
+        )
         assert not store.exists("ab", FeatureSlice.TECHNICAL.value)
         store.save("ab", FeatureSlice.TECHNICAL.value, df)
         assert store.exists("ab", FeatureSlice.TECHNICAL.value)

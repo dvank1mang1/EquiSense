@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pandas as pd
@@ -83,11 +83,7 @@ class MarketDataClient:
             raise DataProviderError("output_size must be 'full' or 'compact'")
 
         if self._api_key:
-            if (
-                output_size == "full"
-                and not skip_cache
-                and self._cache_path_fresh_for_full(sym)
-            ):
+            if output_size == "full" and not skip_cache and self._cache_path_fresh_for_full(sym):
                 cached = await read_ohlcv_parquet(sym)
                 if cached is not None and not cached.empty:
                     logger.debug("OHLCV cache hit for {}", sym)
@@ -140,7 +136,7 @@ class MarketDataClient:
             if e.response.status_code == 429:
                 raise UpstreamRateLimitError("Alpha Vantage HTTP 429") from e
             raise DataProviderError(f"Alpha Vantage HTTP {e.response.status_code}") from e
-        payload = r.json()
+        payload = cast(dict[str, Any], r.json())
         _check_alpha_payload(payload)
         key = "Time Series (Daily)"
         if key not in payload:
@@ -156,7 +152,7 @@ class MarketDataClient:
         if not skip_cache and path.exists():
             age = time.time() - path.stat().st_mtime
             if age < settings.quote_json_cache_max_age_sec:
-                return json.loads(path.read_text(encoding="utf-8"))
+                return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
         await self._limiter.acquire()
         params = {
@@ -171,7 +167,7 @@ class MarketDataClient:
             if e.response.status_code == 429:
                 raise UpstreamRateLimitError("Alpha Vantage HTTP 429") from e
             raise DataProviderError(f"Alpha Vantage HTTP {e.response.status_code}") from e
-        payload = r.json()
+        payload = cast(dict[str, Any], r.json())
         _check_alpha_payload(payload)
         gq = payload.get("Global Quote") or {}
         if not gq:

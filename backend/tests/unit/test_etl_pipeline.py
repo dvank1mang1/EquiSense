@@ -13,9 +13,7 @@ from app.features.feature_store import FeatureStore
 
 @pytest.mark.unit
 class TestRawToProcessedETL:
-    def test_run_technical_raises_when_raw_parquet_missing(
-        self, isolated_data_root: Path
-    ) -> None:
+    def test_run_technical_raises_when_raw_parquet_missing(self, isolated_data_root: Path) -> None:
         etl = RawToProcessedETL(data_root=isolated_data_root)
         with pytest.raises(RawDataMissingError):
             etl.run_technical("missing")

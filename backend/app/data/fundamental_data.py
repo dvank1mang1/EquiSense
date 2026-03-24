@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from loguru import logger
@@ -77,7 +77,7 @@ class FundamentalDataClient:
             if e.response.status_code == 429:
                 raise UpstreamRateLimitError("Alpha Vantage HTTP 429") from e
             raise DataProviderError(f"Alpha Vantage HTTP {e.response.status_code}") from e
-        payload = r.json()
+        payload = cast(dict[str, Any], r.json())
         _check_alpha_payload(payload)
         if not payload or payload.get("Symbol") is None:
             raise DataProviderError(f"No overview data for symbol {sym}")
