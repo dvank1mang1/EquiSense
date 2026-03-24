@@ -11,7 +11,13 @@ from app.core.config import settings
 from app.jobs.batch_refresh import (
     BatchRefreshOrchestrator,
 )
-from app.jobs.queue import get_job_queue, safe_queue_status
+from app.jobs.queue import (
+    get_job_queue,
+    safe_dead_letter_list,
+    safe_queue_snapshot,
+    safe_queue_status,
+    safe_requeue_failed,
+)
 from app.jobs.registry import InMemoryJobRegistry, get_job_registry
 from app.services.dependencies import get_batch_refresh_orchestrator, get_job_store
 
@@ -69,7 +75,8 @@ async def refresh_universe(
     if body.background:
         queue = get_job_queue()
         if settings.job_queue_backend.lower() == "postgres":
-            queue.enqueue(
+            await asyncio.to_thread(
+                queue.enqueue,
                 run_id,
                 {
                     "tickers": [t.strip().upper() for t in body.tickers],
@@ -79,6 +86,7 @@ async def refresh_universe(
                     "run_etl": body.run_etl,
                     "retry_attempts": body.retry_attempts,
                     "retry_wait_sec": body.retry_wait_sec,
+                    "max_attempts": max(1, settings.job_queue_max_attempts),
                 },
             )
             runtime_status = "queued"
@@ -115,7 +123,7 @@ async def get_refresh_universe_status(
         raise HTTPException(status_code=404, detail="Run id not found")
 
     handle = registry.get(run_id)
-    queue_status = safe_queue_status(run_id)
+    queue_status = await asyncio.to_thread(safe_queue_status, run_id)
     if queue_status is not None:
         payload["runtime_status"] = queue_status
     else:
@@ -148,3 +156,42 @@ async def get_refresh_universe_lineage(
         "lineage_path": str(store.lineage_path(run_id)),
         "rows": rows,
     }
+
+
+@router.get("/worker/health")
+async def get_worker_health():
+    snapshot = await asyncio.to_thread(
+        safe_queue_snapshot,
+        stale_after_sec=max(5, settings.job_queue_stale_after_sec),
+    )
+    if snapshot is None:
+        return {
+            "queue_backend": settings.job_queue_backend,
+            "healthy": settings.job_queue_backend.lower() != "postgres",
+            "detail": "queue snapshot unavailable",
+        }
+    return {
+        "queue_backend": settings.job_queue_backend,
+        "healthy": snapshot.get("stale_running", 0) == 0,
+        "snapshot": snapshot,
+    }
+
+
+@router.get("/worker/dead-letter")
+async def list_dead_letter(limit: int = Query(100, ge=1, le=1000)):
+    rows = await asyncio.to_thread(safe_dead_letter_list, limit=limit)
+    if rows is None:
+        return {"queue_backend": settings.job_queue_backend, "rows": []}
+    return {
+        "queue_backend": settings.job_queue_backend,
+        "rows": rows,
+        "count": len(rows),
+    }
+
+
+@router.post("/worker/dead-letter/{run_id}/requeue")
+async def requeue_dead_letter(run_id: str):
+    ok = await asyncio.to_thread(safe_requeue_failed, run_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Dead-letter run id not found")
+    return {"run_id": run_id, "status": "queued"}

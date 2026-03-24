@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import os
 import sys
 from pathlib import Path
 
@@ -30,7 +32,8 @@ def _job_store():
 
 
 async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
-    item = queue.claim_next()
+    worker_id = f"worker-{os.getpid()}"
+    item = await asyncio.to_thread(queue.claim_next, worker_id=worker_id)
     if item is None:
         return False
     payload = item.payload
@@ -42,6 +45,14 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
         retry_attempts=int(payload.get("retry_attempts", 3)),
         retry_wait_sec=float(payload.get("retry_wait_sec", 2.0)),
     )
+    stop_heartbeat = asyncio.Event()
+
+    async def _heartbeat_loop() -> None:
+        while not stop_heartbeat.is_set():
+            await asyncio.sleep(max(0.5, settings.worker_heartbeat_sec))
+            await asyncio.to_thread(queue.heartbeat, item.run_id, worker_id=worker_id)
+
+    hb_task = asyncio.create_task(_heartbeat_loop())
     try:
         await orchestrator.run(
             tickers=[str(t).strip().upper() for t in payload.get("tickers", [])],
@@ -51,10 +62,22 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
             refresh_fundamentals=bool(payload.get("refresh_fundamentals", True)),
             run_etl=bool(payload.get("run_etl", False)),
         )
-        queue.mark_completed(item.run_id)
+        await asyncio.to_thread(queue.mark_completed, item.run_id)
+    except asyncio.CancelledError:
+        await asyncio.to_thread(
+            queue.requeue_run,
+            item.run_id,
+            reason="worker shutdown while running; requeued",
+        )
+        raise
     except Exception as e:  # noqa: BLE001
-        queue.mark_failed(item.run_id, str(e))
+        await asyncio.to_thread(queue.mark_failed, item.run_id, str(e))
         logger.exception("Worker failed run_id={} error={}", item.run_id, e)
+    finally:
+        stop_heartbeat.set()
+        hb_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await hb_task
     return True
 
 
@@ -63,10 +86,20 @@ async def _main_loop(poll_sec: float) -> None:
         raise SystemExit("JOB_QUEUE_BACKEND must be postgres for worker mode")
     queue = PostgresJobQueue()
     async with httpx.AsyncClient(timeout=120.0) as http:
-        while True:
-            had_work = await _run_once(http, queue)
-            if not had_work:
-                await asyncio.sleep(poll_sec)
+        try:
+            while True:
+                requeued = await asyncio.to_thread(
+                    queue.requeue_stale_running,
+                    stale_after_sec=max(5, settings.job_queue_stale_after_sec),
+                )
+                if requeued > 0:
+                    logger.warning("Requeued {} stale running jobs", requeued)
+                had_work = await _run_once(http, queue)
+                if not had_work:
+                    await asyncio.sleep(poll_sec)
+        except asyncio.CancelledError:
+            logger.info("Worker loop cancelled; exiting gracefully")
+            raise
 
 
 def main() -> None:

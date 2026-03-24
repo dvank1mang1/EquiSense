@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     experiment_store_backend: str = "memory"
     job_store_backend: str = "file"
     job_queue_backend: str = "memory"
+    job_queue_stale_after_sec: int = 300
+    worker_heartbeat_sec: float = 5.0
+    job_queue_max_attempts: int = 3
 
     @property
     def database_url(self) -> str:
