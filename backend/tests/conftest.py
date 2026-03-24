@@ -14,6 +14,28 @@ import pandas as pd
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _limit_blas_threads_for_integration(request: pytest.FixtureRequest):
+    """Single-thread BLAS/OpenMP for integration tests — fewer flakes on GitHub runners."""
+    if request.node.get_closest_marker("integration") is None:
+        yield
+        return
+    import os
+
+    keys = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+    saved = {k: os.environ.get(k) for k in keys}
+    try:
+        for k in keys:
+            os.environ[k] = "1"
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 @pytest.fixture
 def rng() -> np.random.Generator:
     return np.random.default_rng(42)

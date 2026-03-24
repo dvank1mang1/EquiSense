@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,17 +19,21 @@ def test_train_model_lifecycle_http() -> None:
     assert run["ticker"] == "AAPL"
     run_id = run["run_id"]
 
-    # Poll briefly; training check is lightweight and should complete quickly.
+    # Poll until terminal state (CI runners can be slow; XGBoost fit is not instant).
     status = None
-    for _ in range(10):
+    payload: dict[str, Any] = {}
+    deadline = time.monotonic() + 30.0
+    while time.monotonic() < deadline:
         rs = client.get(f"/api/v1/models/model_d/train/{run_id}")
         assert rs.status_code == 200
         payload = rs.json()
         status = payload["status"]
         if status in {"completed", "failed"}:
             break
-        time.sleep(0.05)
-    assert status in {"completed", "failed"}
+        time.sleep(0.1)
+    assert status in {"completed", "failed"}, (
+        f"training still {status!r} after 30s — CI may be overloaded or pipeline hung"
+    )
     assert payload["params"]["target"] == "next_day_return_gt_0"
     if status == "completed":
         assert isinstance(payload["dataset_fingerprint"], str)
