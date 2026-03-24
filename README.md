@@ -62,7 +62,7 @@ uv run uvicorn main:app --reload
 
 Без dev-зависимостей: `uv sync`. Lockfile: `backend/uv.lock` (коммитить в git).
 
-С **docker-compose** и bind-mount `./backend:/app` контейнер видит твой локальный `backend/.venv` — перед `docker compose up` выполни в `backend/` хотя бы `uv sync` (или положи venv в репозиторий не нужно: `.venv` в `.gitignore`).
+С **docker-compose** backend использует отдельный volume `backend_venv:/app/.venv`, поэтому локальный `backend/.venv` не ломает контейнерный runtime.
 
 **Frontend:**
 ```bash
@@ -88,6 +88,33 @@ npm run dev
 - Backend CI: `.github/workflows/backend-ci.yml` (ruff + mypy + pytest)
 - Architecture decisions and migration triggers: `ARCHITECTURE_DECISIONS.md`
 - SLO/SLI baseline and error budget: `SLO.md`
+
+## Production-lite roadmap (without Kubernetes)
+
+Current runtime is intentionally simple: `docker-compose` + `postgres` + FastAPI backend.
+This is enough for early and mid-stage development if reliability controls are explicit.
+
+Recommended sequence:
+
+1. **Stabilize current compose runtime**
+   - Separate `api` and background worker process (jobs/training).
+   - Keep Postgres for control-plane metadata (jobs/experiments/model registry).
+   - Add regular backup policy for Postgres volume.
+
+2. **Add operational guardrails**
+   - Health/readiness probes (`/health` + dependency checks).
+   - Structured logs with request and run identifiers.
+   - Alerting from `SLO.md` thresholds (freshness, latency, failure rate).
+
+3. **Introduce queue only when needed**
+   - Add Redis + task queue if job concurrency becomes a bottleneck.
+   - Move long-running training/backtesting to workers.
+   - Keep API latency predictable under load.
+
+4. **Return to Kubernetes only by triggers**
+   - Need horizontal scaling for API/workers.
+   - Need controlled rolling deploys across multiple environments.
+   - Need autoscaling and self-healing beyond compose limits.
 
 ## Backtesting API (ready)
 
