@@ -1,11 +1,8 @@
 import pandas as pd
 import numpy as np
-from app.models.model_a import TECHNICAL_FEATURES
-from app.models.base import BaseMLModel
 
-SENTIMENT_FEATURES = [
-    "sentiment_score", "news_count", "positive_ratio", "negative_ratio", "sentiment_momentum",
-]
+from app.features.constants import SENTIMENT_FEATURES, TECHNICAL_FEATURES
+from app.models.base import BaseMLModel
 
 ALL_FEATURES = TECHNICAL_FEATURES + SENTIMENT_FEATURES
 

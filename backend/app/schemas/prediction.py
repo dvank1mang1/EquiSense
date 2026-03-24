@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Optional
 from enum import Enum
 
 
@@ -22,7 +22,8 @@ class PredictionResponse(BaseModel):
     signal: Optional[Signal] = None
     probability: Optional[float] = None
     confidence: Optional[float] = None
-    explanation: Optional[FeatureContribution] = None
+    # Pipeline status, SHAP summary, or bucketed contributions (see FeatureContribution when stable)
+    explanation: dict[str, Any] | None = None
 
 
 class ModelMetrics(BaseModel):

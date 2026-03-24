@@ -1,5 +1,5 @@
-from app.data.market_data import MarketDataClient
-from app.data.fundamental_data import FundamentalDataClient
-from app.data.news_data import NewsDataClient
+"""
+Data layer: import from submodules to avoid loading all adapters at package import.
 
-__all__ = ["MarketDataClient", "FundamentalDataClient", "NewsDataClient"]
+Examples: `from app.data.market_data import MarketDataClient`
+"""

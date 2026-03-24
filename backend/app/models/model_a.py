@@ -1,13 +1,11 @@
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import GradientBoostingClassifier
+
+from app.features.constants import TECHNICAL_FEATURES
 from app.models.base import BaseMLModel
 
-TECHNICAL_FEATURES = [
-    "returns", "volatility", "rsi", "macd", "macd_signal", "macd_hist",
-    "sma_20", "sma_50", "sma_200", "bb_upper", "bb_lower", "bb_width",
-    "momentum",
-]
+__all__ = ["ModelA", "TECHNICAL_FEATURES"]
 
 
 class ModelA(BaseMLModel):

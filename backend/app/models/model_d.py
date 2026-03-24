@@ -1,8 +1,7 @@
 import pandas as pd
 import numpy as np
-from app.models.model_a import TECHNICAL_FEATURES
-from app.models.model_b import FUNDAMENTAL_FEATURES
-from app.models.model_c import SENTIMENT_FEATURES
+
+from app.features.constants import FUNDAMENTAL_FEATURES, SENTIMENT_FEATURES, TECHNICAL_FEATURES
 from app.models.base import BaseMLModel
 
 ALL_FEATURES = TECHNICAL_FEATURES + FUNDAMENTAL_FEATURES + SENTIMENT_FEATURES

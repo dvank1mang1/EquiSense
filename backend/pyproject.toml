@@ -1,0 +1,63 @@
+# pandas-ta убран: актуальные релизы требуют Python 3.12+; тех. фичи считаем вручную (technical.py).
+# При переходе на 3.12+ можно вернуть пакет.
+
+[project]
+name = "equisense-api"
+version = "0.1.0"
+description = "EquiSense FastAPI backend (ML + data pipeline)"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "fastapi==0.111.0",
+    "uvicorn[standard]==0.29.0",
+    "python-multipart==0.0.9",
+    "websockets==12.0",
+    "sqlalchemy==2.0.30",
+    "asyncpg==0.29.0",
+    "alembic==1.13.1",
+    "psycopg2-binary==2.9.9",
+    "pydantic==2.7.1",
+    "pydantic-settings==2.2.1",
+    "python-dotenv==1.0.1",
+    "pandas==2.2.2",
+    "numpy==1.26.4",
+    "pyarrow==16.0.0",
+    "scikit-learn==1.4.2",
+    "xgboost==2.0.3",
+    "lightgbm==4.6.0",
+    "shap==0.45.0",
+    "ta==0.11.0",
+    "transformers==4.40.2",
+    "torch==2.3.0",
+    "sentencepiece==0.2.0",
+    "requests==2.31.0",
+    "httpx==0.27.0",
+    "alpha-vantage==2.3.1",
+    "finnhub-python==2.4.19",
+    "newsapi-python==0.2.7",
+    "matplotlib==3.9.0",
+    "yfinance==0.2.40",
+    "python-jose[cryptography]==3.3.0",
+    "tenacity==8.3.0",
+    "loguru==0.7.2",
+    "joblib==1.4.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2.0,<10",
+    "pytest-asyncio>=0.23.6,<2",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "unit: fast, no network IO",
+    "integration: external APIs, DB, or heavy ML",
+]

@@ -11,7 +11,7 @@ ML-платформа для анализа и прогнозирования д
 | NLP | HuggingFace Transformers, FinBERT |
 | Storage | PostgreSQL, Parquet |
 | Frontend | Next.js 14, Tailwind CSS, Plotly |
-| DevOps | Docker, docker-compose |
+| DevOps | Docker, docker-compose, uv (Python env) |
 
 ## Структура проекта
 
@@ -49,14 +49,19 @@ docker-compose up --build
 
 ### 3. Локальная разработка (без Docker)
 
-**Backend:**
+**Backend** ([uv](https://docs.astral.sh/uv/) — один lockfile, быстрый venv):
+
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload
+# при необходимости: curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync --all-groups   # runtime + dev (pytest)
+uv run uvicorn main:app --reload
+# тесты: uv run pytest
 ```
+
+Без dev-зависимостей: `uv sync`. Lockfile: `backend/uv.lock` (коммитить в git).
+
+С **docker-compose** и bind-mount `./backend:/app` контейнер видит твой локальный `backend/.venv` — перед `docker compose up` выполни в `backend/` хотя бы `uv sync` (или положи venv в репозиторий не нужно: `.venv` в `.gitignore`).
 
 **Frontend:**
 ```bash

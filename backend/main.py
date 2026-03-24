@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
@@ -12,7 +14,11 @@ from app.api import router as api_router
 async def lifespan(app: FastAPI):
     setup_logging()
     logger.info(f"Starting {settings.app_name}")
-    yield
+    timeout = httpx.Timeout(60.0, connect=10.0)
+    limits = httpx.Limits(max_connections=32, max_keepalive_connections=16)
+    async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as client:
+        app.state.http_client = client
+        yield
     logger.info("Shutting down")
 
 

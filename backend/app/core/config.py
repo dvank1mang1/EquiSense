@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     alpha_vantage_api_key: str = ""
     finnhub_api_key: str = ""
     news_api_key: str = ""
+    # Alpha Vantage free tier ~5 calls/min — pace all AV endpoints with one limiter
+    alpha_vantage_min_interval_sec: float = 12.0
+    ohlcv_parquet_cache_max_age_sec: int = 86400
+    fundamentals_json_cache_max_age_sec: int = 604800
+    quote_json_cache_max_age_sec: int = 120
 
     # Backend
     backend_host: str = "0.0.0.0"

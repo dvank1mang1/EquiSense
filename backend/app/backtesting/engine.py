@@ -23,6 +23,8 @@ class BacktestEngine:
     """
     Симулирует торговую стратегию на основе предсказаний ML-модели.
 
+    Satisfies :class:`app.contracts.backtesting.BacktestRunner` when ``run`` is implemented.
+
     Стратегия:
         - Long позиция при сигнале Buy / Strong Buy
         - Выход при сигнале Sell или Hold (в зависимости от настроек)
