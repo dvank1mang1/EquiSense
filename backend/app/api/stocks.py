@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -99,15 +99,16 @@ async def get_stock_overview(
 
 
 def pd_ts_to_date_str(d: Any) -> str:
-    if hasattr(d, "strftime"):
-        return d.strftime("%Y-%m-%d")
+    strftime = getattr(d, "strftime", None)
+    if callable(strftime):
+        return str(strftime("%Y-%m-%d"))
     return str(d)[:10]
 
 
 @router.get("/{ticker}/history")
 async def get_price_history(
     ticker: str,
-    period: Optional[str] = Query("1y", description="1m, 3m, 6m, 1y, 2y, max"),
+    period: str | None = Query("1y", description="1m, 3m, 6m, 1y, 2y, max"),
     market: MarketDataProvider = Depends(get_market_data_provider),
 ):
     """OHLCV; источник — API или локальный Parquet."""

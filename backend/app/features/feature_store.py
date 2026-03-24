@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd
 
 from app.core.config import settings
+from app.data.validation import validate_date_column
 from app.domain.exceptions import FeatureDataMissingError
 from app.domain.identifiers import FeatureSlice
 from app.features.constants import FUNDAMENTAL_FEATURES, SENTIMENT_FEATURES, TECHNICAL_FEATURES
-
 
 _ALLOWED_SLICES = frozenset(
     {
@@ -59,6 +59,8 @@ class FeatureStore:
         ft = self._validate_slice(feature_type)
         if df.empty:
             raise ValueError("Refusing to save empty DataFrame")
+        if "date" in df.columns:
+            validate_date_column(df, context=f"processed/{ticker}/{ft}")
         d = self._ticker_dir(ticker)
         d.mkdir(parents=True, exist_ok=True)
         path = self._path(ticker, ft)

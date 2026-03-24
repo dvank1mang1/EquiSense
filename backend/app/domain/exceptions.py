@@ -21,6 +21,10 @@ class RawDataMissingError(EquiSenseError):
     """Expected raw Parquet/JSON under data/raw is missing."""
 
 
+class DataValidationError(EquiSenseError):
+    """Data artifact exists but violates schema/quality contract."""
+
+
 class DataProviderError(EquiSenseError):
     """Upstream data provider returned an error or unexpected payload."""
 

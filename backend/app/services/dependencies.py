@@ -12,6 +12,7 @@ from app.data.fundamental_data import FundamentalDataClient
 from app.data.market_data import MarketDataClient
 from app.data.news_data import NewsDataClient
 from app.features.feature_store import FeatureStore
+from app.jobs.batch_refresh import BatchRefreshOrchestrator
 from app.services.prediction_service import PredictionService
 
 
@@ -42,4 +43,11 @@ def get_prediction_service(
     return PredictionService(
         market=MarketDataClient(http=get_http_client(request)),
         features=features,
+    )
+
+
+def get_batch_refresh_orchestrator(request: Request) -> BatchRefreshOrchestrator:
+    return BatchRefreshOrchestrator(
+        market=MarketDataClient(http=get_http_client(request)),
+        fundamentals=FundamentalDataClient(http=get_http_client(request)),
     )

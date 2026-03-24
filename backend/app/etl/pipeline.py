@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from app.data.persistence import fundamentals_json_path, read_ohlcv_parquet_sync
+from app.data.validation import validate_fundamentals_snapshot, validate_ohlcv_frame
 from app.domain.exceptions import RawDataMissingError
 from app.domain.identifiers import FeatureSlice
 from app.features.constants import FUNDAMENTAL_FEATURES
@@ -33,9 +34,8 @@ class RawToProcessedETL:
         sym = ticker.strip().upper()
         raw = read_ohlcv_parquet_sync(sym, root=self._root)
         if raw is None or raw.empty:
-            raise RawDataMissingError(
-                f"No raw OHLCV at raw/ohlcv/{sym}.parquet under data root"
-            )
+            raise RawDataMissingError(f"No raw OHLCV at raw/ohlcv/{sym}.parquet under data root")
+        validate_ohlcv_frame(raw, context=f"raw/ohlcv/{sym}")
         feats = self._technical.compute(raw)
         self._store.save(sym, FeatureSlice.TECHNICAL.value, feats)
         return self._store.path_for(sym, FeatureSlice.TECHNICAL.value)
@@ -48,6 +48,7 @@ class RawToProcessedETL:
         if not json_path.exists():
             raise RawDataMissingError(f"No raw fundamentals JSON at {json_path}")
         overview = json.loads(json_path.read_text(encoding="utf-8"))
+        validate_fundamentals_snapshot(overview, context=f"raw/fundamentals/{sym}")
         scalar = self._fundamental.compute(overview)
         tech = self._store.load(sym, FeatureSlice.TECHNICAL.value)
         dates = pd.to_datetime(tech["date"])
