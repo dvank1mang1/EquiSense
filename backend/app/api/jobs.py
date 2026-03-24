@@ -177,6 +177,41 @@ async def get_worker_health():
     }
 
 
+@router.get("/worker/metrics")
+async def get_worker_metrics():
+    snapshot = await asyncio.to_thread(
+        safe_queue_snapshot,
+        stale_after_sec=max(5, settings.job_queue_stale_after_sec),
+    )
+    if snapshot is None:
+        return {
+            "queue_backend": settings.job_queue_backend,
+            "available": False,
+        }
+    queue_depth = int(snapshot.get("queued", 0)) + int(snapshot.get("running", 0))
+    failed = int(snapshot.get("failed", 0))
+    completed = int(snapshot.get("completed", 0))
+    total_finished = failed + completed
+    failure_rate = float(failed / total_finished) if total_finished > 0 else 0.0
+    dead_letter = int(snapshot.get("dead_letter", 0))
+    stale_running = int(snapshot.get("stale_running", 0))
+    unhealthy_reasons: list[str] = []
+    if stale_running > 0:
+        unhealthy_reasons.append("stale_running_jobs")
+    if dead_letter > 0:
+        unhealthy_reasons.append("dead_letter_jobs")
+    return {
+        "queue_backend": settings.job_queue_backend,
+        "available": True,
+        "queue_depth": queue_depth,
+        "failure_rate": round(failure_rate, 4),
+        "dead_letter": dead_letter,
+        "stale_running": stale_running,
+        "unhealthy_reasons": unhealthy_reasons,
+        "snapshot": snapshot,
+    }
+
+
 @router.get("/worker/dead-letter")
 async def list_dead_letter(limit: int = Query(100, ge=1, le=1000)):
     rows = await asyncio.to_thread(safe_dead_letter_list, limit=limit)

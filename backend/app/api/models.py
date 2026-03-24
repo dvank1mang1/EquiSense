@@ -69,12 +69,45 @@ class TrainingRunStatusResponse(BaseModel):
     updated_at: str
     params: dict[str, Any] | None = None
     dataset_fingerprint: str | None = None
+    artifact_path: str | None = None
     metrics: dict[str, Any] | None = None
     error: str | None = None
 
 
 class ExperimentListResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     items: list[TrainingRunStatusResponse]
+    total: int = Field(..., ge=0)
+
+
+class PromoteChampionBody(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    reason: str = Field(default="manual promotion", min_length=3, max_length=200)
+
+
+class ModelLifecycleResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_id: str
+    champion_run_id: str | None = None
+    updated_at: str
+    history: list[dict[str, str]]
+
+
+class ChampionCatalogEntry(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_id: str
+    champion_run_id: str | None = None
+    updated_at: str
+
+
+class ChampionCatalogResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    items: list[ChampionCatalogEntry]
     total: int = Field(..., ge=0)
 
 
@@ -117,8 +150,66 @@ async def get_train_status(
         updated_at=run.updated_at,
         params=run.params,
         dataset_fingerprint=run.dataset_fingerprint,
+        artifact_path=run.artifact_path,
         metrics=run.metrics,
         error=run.error,
+    )
+
+
+@router.get("/{model_id}/lifecycle", response_model=ModelLifecycleResponse)
+async def get_model_lifecycle(
+    model_id: str,
+    service: TrainingService = Depends(get_training_service),
+):
+    try:
+        _ = ModelId(model_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Unknown model id: {model_id!r}") from e
+    state = await service.get_lifecycle(model_id)
+    return ModelLifecycleResponse(
+        model_id=state.model_id,
+        champion_run_id=state.champion_run_id,
+        updated_at=state.updated_at,
+        history=state.history,
+    )
+
+
+@router.get("/lifecycle/champions", response_model=ChampionCatalogResponse)
+async def list_champions(
+    service: TrainingService = Depends(get_training_service),
+):
+    states = await service.list_lifecycles()
+    items = [
+        ChampionCatalogEntry(
+            model_id=s.model_id,
+            champion_run_id=s.champion_run_id,
+            updated_at=s.updated_at,
+        )
+        for s in states
+    ]
+    return ChampionCatalogResponse(items=items, total=len(items))
+
+
+@router.post("/{model_id}/lifecycle/promote/{run_id}", response_model=ModelLifecycleResponse)
+async def promote_model_champion(
+    model_id: str,
+    run_id: str,
+    body: PromoteChampionBody,
+    service: TrainingService = Depends(get_training_service),
+):
+    try:
+        _ = ModelId(model_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Unknown model id: {model_id!r}") from e
+    try:
+        state = await service.promote_champion(model_id, run_id, reason=body.reason)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    return ModelLifecycleResponse(
+        model_id=state.model_id,
+        champion_run_id=state.champion_run_id,
+        updated_at=state.updated_at,
+        history=state.history,
     )
 
 
@@ -144,6 +235,7 @@ async def list_model_experiments(
             updated_at=run.updated_at,
             params=run.params,
             dataset_fingerprint=run.dataset_fingerprint,
+            artifact_path=run.artifact_path,
             metrics=run.metrics,
             error=run.error,
         )
@@ -174,6 +266,7 @@ async def get_model_experiment(
         updated_at=run.updated_at,
         params=run.params,
         dataset_fingerprint=run.dataset_fingerprint,
+        artifact_path=run.artifact_path,
         metrics=run.metrics,
         error=run.error,
     )

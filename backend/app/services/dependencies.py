@@ -25,6 +25,12 @@ from app.services.experiment_store import (
     PostgresExperimentStore,
     ResilientExperimentStore,
 )
+from app.services.lifecycle_store import (
+    InMemoryLifecycleStore,
+    LifecycleStore,
+    PostgresLifecycleStore,
+    ResilientLifecycleStore,
+)
 from app.services.prediction_service import PredictionService
 from app.services.training_service import TrainingService, get_training_registry
 
@@ -44,6 +50,16 @@ if settings.job_store_backend.lower() == "postgres":
     _job_store = ResilientJobStore(primary=PostgresJobStore(), fallback=_file_job_store)
 else:
     _job_store = _file_job_store
+
+_memory_lifecycle_store = InMemoryLifecycleStore()
+_lifecycle_store: LifecycleStore
+if settings.lifecycle_store_backend.lower() == "postgres":
+    _lifecycle_store = ResilientLifecycleStore(
+        primary=PostgresLifecycleStore(engine=engine),
+        fallback=_memory_lifecycle_store,
+    )
+else:
+    _lifecycle_store = _memory_lifecycle_store
 
 
 def get_http_client(request: Request):
@@ -88,6 +104,7 @@ def get_training_service() -> TrainingService:
         features=FeatureStore(),
         registry=get_training_registry(),
         experiment_store=_experiment_store,
+        lifecycle=_lifecycle_store,
     )
 
 

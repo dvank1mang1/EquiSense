@@ -68,10 +68,16 @@ class PostgresExperimentStore:
                             updated_at TEXT NOT NULL,
                             params_json TEXT NULL,
                             dataset_fingerprint TEXT NULL,
+                            artifact_path TEXT NULL,
                             metrics_json TEXT NULL,
                             error TEXT NULL
                         )
                         """
+                    )
+                )
+                await conn.execute(
+                    text(
+                        "ALTER TABLE training_experiments ADD COLUMN IF NOT EXISTS artifact_path TEXT NULL"
                     )
                 )
             self._is_ready = True
@@ -87,16 +93,17 @@ class PostgresExperimentStore:
                     """
                     INSERT INTO training_experiments (
                         run_id, model_id, ticker, status, created_at, updated_at,
-                        params_json, dataset_fingerprint, metrics_json, error
+                        params_json, dataset_fingerprint, artifact_path, metrics_json, error
                     ) VALUES (
                         :run_id, :model_id, :ticker, :status, :created_at, :updated_at,
-                        :params_json, :dataset_fingerprint, :metrics_json, :error
+                        :params_json, :dataset_fingerprint, :artifact_path, :metrics_json, :error
                     )
                     ON CONFLICT (run_id) DO UPDATE SET
                         status = EXCLUDED.status,
                         updated_at = EXCLUDED.updated_at,
                         params_json = EXCLUDED.params_json,
                         dataset_fingerprint = EXCLUDED.dataset_fingerprint,
+                        artifact_path = EXCLUDED.artifact_path,
                         metrics_json = EXCLUDED.metrics_json,
                         error = EXCLUDED.error
                     """
@@ -110,6 +117,7 @@ class PostgresExperimentStore:
                     "updated_at": run.updated_at,
                     "params_json": params_json,
                     "dataset_fingerprint": run.dataset_fingerprint,
+                    "artifact_path": run.artifact_path,
                     "metrics_json": metrics_json,
                     "error": run.error,
                 },
@@ -122,7 +130,7 @@ class PostgresExperimentStore:
                 text(
                     """
                     SELECT run_id, model_id, ticker, status, created_at, updated_at,
-                           params_json, dataset_fingerprint, metrics_json, error
+                           params_json, dataset_fingerprint, artifact_path, metrics_json, error
                     FROM training_experiments
                     WHERE run_id = :run_id
                     """
@@ -143,6 +151,7 @@ class PostgresExperimentStore:
             dataset_fingerprint=str(row["dataset_fingerprint"])
             if row["dataset_fingerprint"]
             else None,
+            artifact_path=str(row["artifact_path"]) if row["artifact_path"] else None,
             metrics=json.loads(str(row["metrics_json"])) if row["metrics_json"] else None,
             error=str(row["error"]) if row["error"] else None,
         )
@@ -163,7 +172,7 @@ class PostgresExperimentStore:
         where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         query = f"""
             SELECT run_id, model_id, ticker, status, created_at, updated_at,
-                   params_json, dataset_fingerprint, metrics_json, error
+                   params_json, dataset_fingerprint, artifact_path, metrics_json, error
             FROM training_experiments
             {where_sql}
             ORDER BY created_at DESC
@@ -186,6 +195,7 @@ class PostgresExperimentStore:
                     dataset_fingerprint=str(row["dataset_fingerprint"])
                     if row["dataset_fingerprint"]
                     else None,
+                    artifact_path=str(row["artifact_path"]) if row["artifact_path"] else None,
                     metrics=json.loads(str(row["metrics_json"])) if row["metrics_json"] else None,
                     error=str(row["error"]) if row["error"] else None,
                 )

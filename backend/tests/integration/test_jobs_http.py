@@ -195,3 +195,31 @@ def test_worker_dead_letter_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
 
     nf = client.post("/api/v1/jobs/worker/dead-letter/unknown/requeue")
     assert nf.status_code == 404
+
+
+@pytest.mark.integration
+def test_worker_metrics_endpoint_derives_queue_indicators(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.api.jobs as jobs_api
+    from main import app
+
+    monkeypatch.setattr(
+        jobs_api,
+        "safe_queue_snapshot",
+        lambda *, stale_after_sec: {
+            "queued": 4,
+            "running": 1,
+            "completed": 8,
+            "failed": 2,
+            "stale_running": 1,
+            "dead_letter": 1,
+        },
+    )
+    client = TestClient(app)
+    r = client.get("/api/v1/jobs/worker/metrics")
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["available"] is True
+    assert payload["queue_depth"] == 5
+    assert payload["failure_rate"] == 0.2
+    assert payload["dead_letter"] == 1
+    assert "stale_running_jobs" in payload["unhealthy_reasons"]

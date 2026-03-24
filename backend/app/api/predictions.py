@@ -2,6 +2,7 @@ import asyncio
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -26,27 +27,78 @@ from app.services.dependencies import (
     get_batch_refresh_orchestrator,
     get_job_store,
     get_prediction_service,
+    get_training_service,
 )
 from app.services.prediction_service import PredictionService
+from app.services.training_service import TrainingService
 
 router = APIRouter()
+
+
+class _ModelSelection(NamedTuple):
+    model_id: ModelId
+    champion_run_id: str | None
+    artifact_path: str | None
+
+
+async def _resolve_model_selector(model: str, training: TrainingService) -> _ModelSelection:
+    raw = model.strip().lower()
+    try:
+        mid = ModelId(raw)
+        return _ModelSelection(model_id=mid, champion_run_id=None, artifact_path=None)
+    except ValueError:
+        pass
+
+    target: ModelId
+    if raw == "champion":
+        target = ModelId.MODEL_D
+    elif raw.startswith("champion:"):
+        suffix = raw.split(":", 1)[1]
+        try:
+            target = ModelId(suffix)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"Unknown model selector: {model!r}") from e
+    else:
+        raise HTTPException(status_code=422, detail=f"Unknown model selector: {model!r}")
+
+    state = await training.get_lifecycle(target.value)
+    if state.champion_run_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No champion promoted for {target.value}; promote a completed run first",
+        )
+    champion_run = await training.get_status(state.champion_run_id)
+    if champion_run is None or champion_run.artifact_path is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Champion artifact is missing for {target.value}; retrain and re-promote",
+        )
+    return _ModelSelection(
+        model_id=target,
+        champion_run_id=state.champion_run_id,
+        artifact_path=champion_run.artifact_path,
+    )
 
 
 @router.get("/{ticker}", response_model=PredictionResponse)
 async def get_prediction(
     ticker: str,
-    model: ModelId = Query(
-        default=ModelId.MODEL_D,
-        description="Registered model id (model_a … model_d).",
+    model: str = Query(
+        default="model_d",
+        description="Model selector: model_a..model_d or champion[:model_a..model_d].",
     ),
     service: PredictionService = Depends(get_prediction_service),
+    training: TrainingService = Depends(get_training_service),
 ):
     """
     Прогноз вероятности роста акции.
     Возвращает: сигнал (Strong Buy/Buy/Hold/Sell), probability, confidence, объяснение.
     """
+    selection = await _resolve_model_selector(model, training)
     try:
-        outcome = await service.predict(ticker, model)
+        outcome = await service.predict(
+            ticker, selection.model_id, artifact_path=selection.artifact_path
+        )
     except UnknownModelError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     except ModelArtifactMissingError as e:
@@ -67,7 +119,10 @@ async def get_prediction(
         signal=sig,
         probability=outcome.probability,
         confidence=outcome.confidence,
-        explanation=outcome.explanation,
+        explanation={
+            **(outcome.explanation or {}),
+            "resolved_run_id": selection.champion_run_id,
+        },
     )
 
 
@@ -97,14 +152,16 @@ async def get_shap_explanation(
 @router.get("/{ticker}/readiness", response_model=PredictionReadinessResponse)
 async def get_prediction_readiness(
     ticker: str,
-    model: ModelId = Query(
-        default=ModelId.MODEL_D,
-        description="Registered model id (model_a … model_d).",
+    model: str = Query(
+        default="model_d",
+        description="Model selector: model_a..model_d or champion[:model_a..model_d].",
     ),
     service: PredictionService = Depends(get_prediction_service),
+    training: TrainingService = Depends(get_training_service),
 ):
     """Readiness checks for prediction dependencies (raw/processed/model artifact)."""
-    out = await service.readiness(ticker, model)
+    selection = await _resolve_model_selector(model, training)
+    out = await service.readiness(ticker, selection.model_id, artifact_path=selection.artifact_path)
     checks = {
         k: ReadinessCheck(ok=bool(v.get("ok", False)), detail=str(v.get("detail", "")))
         for k, v in out.checks.items()
@@ -159,12 +216,13 @@ def _recommended_action(
 async def ensure_prediction_ready(
     ticker: str,
     body: EnsureReadyBody,
-    model: ModelId = Query(
-        default=ModelId.MODEL_D,
-        description="Registered model id (model_a … model_d).",
+    model: str = Query(
+        default="model_d",
+        description="Model selector: model_a..model_d or champion[:model_a..model_d].",
     ),
     service: PredictionService = Depends(get_prediction_service),
     orchestrator: BatchRefreshOrchestrator = Depends(get_batch_refresh_orchestrator),
+    training: TrainingService = Depends(get_training_service),
 ):
     """
     Try to make ticker prediction-ready:
@@ -172,7 +230,10 @@ async def ensure_prediction_ready(
     2) run one-ticker refresh workflow (optionally ETL)
     3) read readiness again and return before/after delta
     """
-    before = await service.readiness(ticker, model)
+    selection = await _resolve_model_selector(model, training)
+    before = await service.readiness(
+        ticker, selection.model_id, artifact_path=selection.artifact_path
+    )
     run_id = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     status_path, lineage_path = await orchestrator.run(
         tickers=[ticker.strip().upper()],
@@ -182,7 +243,9 @@ async def ensure_prediction_ready(
         refresh_fundamentals=body.refresh_fundamentals,
         run_etl=body.run_etl,
     )
-    after = await service.readiness(ticker, model)
+    after = await service.readiness(
+        ticker, selection.model_id, artifact_path=selection.artifact_path
+    )
     checks_before = {
         k: ReadinessCheck(ok=bool(v.get("ok", False)), detail=str(v.get("detail", "")))
         for k, v in before.checks.items()
@@ -212,18 +275,20 @@ async def ensure_prediction_ready(
 )
 async def get_prediction_status(
     ticker: str,
-    model: ModelId = Query(
-        default=ModelId.MODEL_D,
-        description="Registered model id (model_a … model_d).",
+    model: str = Query(
+        default="model_d",
+        description="Model selector: model_a..model_d or champion[:model_a..model_d].",
     ),
     service: PredictionService = Depends(get_prediction_service),
     store: JobStore = Depends(get_job_store),
+    training: TrainingService = Depends(get_training_service),
 ):
     """
     Operational status for one ticker in one response:
     readiness + freshness + latest job row + recommended action.
     """
-    out = await service.readiness(ticker, model)
+    selection = await _resolve_model_selector(model, training)
+    out = await service.readiness(ticker, selection.model_id, artifact_path=selection.artifact_path)
     checks = out.checks
     freshness: dict[str, dict[str, object]] = {}
     for key in (

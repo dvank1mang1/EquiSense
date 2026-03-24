@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     postgres_user: str = "postgres"
     postgres_password: str = "postgres"
     experiment_store_backend: str = "memory"
+    lifecycle_store_backend: str = "memory"
     job_store_backend: str = "file"
     job_queue_backend: str = "memory"
     job_queue_stale_after_sec: int = 300

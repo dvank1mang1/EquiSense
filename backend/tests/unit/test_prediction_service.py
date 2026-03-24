@@ -31,7 +31,8 @@ class TestPredictionServiceInference:
                 model_id = "model_a"
                 feature_set = TECHNICAL_FEATURES
 
-                def load(self) -> None:
+                def load(self, artifact_path=None) -> None:
+                    _ = artifact_path
                     pass
 
                 def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
@@ -67,7 +68,8 @@ class TestPredictionServiceInference:
                 model_id = "model_a"
                 feature_set = TECHNICAL_FEATURES
 
-                def load(self) -> None:
+                def load(self, artifact_path=None) -> None:
+                    _ = artifact_path
                     pass
 
                 def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
@@ -104,7 +106,8 @@ class TestPredictionServiceInference:
                 model_id = "model_a"
                 feature_set = TECHNICAL_FEATURES
 
-                def load(self) -> None:
+                def load(self, artifact_path=None) -> None:
+                    _ = artifact_path
                     raise FileNotFoundError("missing.joblib")
 
             gmc.return_value = _M
@@ -131,7 +134,8 @@ class TestPredictionServiceInference:
                 model_id = "model_a"
                 feature_set = TECHNICAL_FEATURES
 
-                def load(self) -> None:
+                def load(self, artifact_path=None) -> None:
+                    _ = artifact_path
                     pass
 
             gmc.return_value = _M

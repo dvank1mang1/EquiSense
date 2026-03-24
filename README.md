@@ -118,6 +118,13 @@ Operational switches:
 - `JOB_STORE_BACKEND=postgres` enables Postgres-backed job status/lineage/metrics.
 - `JOB_QUEUE_BACKEND=postgres` enables API-to-worker background queue.
 
+Worker operations API:
+
+- `GET /api/v1/jobs/worker/health` — queue snapshot + stale-running health.
+- `GET /api/v1/jobs/worker/metrics` — derived queue indicators (`queue_depth`, `failure_rate`, `dead_letter`).
+- `GET /api/v1/jobs/worker/dead-letter` — list dead-letter runs.
+- `POST /api/v1/jobs/worker/dead-letter/{run_id}/requeue` — manual requeue for failed run.
+
 4. **Return to Kubernetes only by triggers**
    - Need horizontal scaling for API/workers.
    - Need controlled rolling deploys across multiple environments.

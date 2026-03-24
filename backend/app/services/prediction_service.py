@@ -28,7 +28,9 @@ class PredictionService:
         self._market = market
         self._features = features
 
-    async def readiness(self, ticker: str, model_id: ModelId) -> PredictionReadinessOutcome:
+    async def readiness(
+        self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+    ) -> PredictionReadinessOutcome:
         """Check whether inference dependencies are present and consistent."""
         from app.models import get_model_class
 
@@ -60,7 +62,7 @@ class PredictionService:
             "detail": str(self._features.path_for(sym, "fundamental")),
         }
 
-        model_path = Path(instance.model_path)
+        model_path = Path(artifact_path) if artifact_path else Path(instance.model_path)
         checks["model_artifact"] = {
             "ok": model_path.exists(),
             "detail": str(model_path),
@@ -99,7 +101,9 @@ class PredictionService:
             checks=checks,
         )
 
-    async def predict(self, ticker: str, model_id: ModelId) -> PredictionOutcome:
+    async def predict(
+        self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+    ) -> PredictionOutcome:
         """
         Run inference for latest available row.
 
@@ -112,7 +116,7 @@ class PredictionService:
         model_cls = get_model_class(model_id)
         instance = model_cls()
         try:
-            instance.load()
+            instance.load(artifact_path)
         except FileNotFoundError as e:
             raise ModelArtifactMissingError(
                 f"No trained artifact for {model_id.value}; run training script first."

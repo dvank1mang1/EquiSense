@@ -12,6 +12,7 @@ from app.services.dependencies import (
     get_batch_refresh_orchestrator,
     get_job_store,
     get_prediction_service,
+    get_training_service,
 )
 
 
@@ -20,7 +21,10 @@ def test_get_prediction_503_when_features_missing() -> None:
     from main import app
 
     class _Svc:
-        async def predict(self, ticker: str, model_id: ModelId):
+        async def predict(
+            self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+        ):
+            _ = artifact_path
             raise FeatureDataMissingError("processed features not found")
 
     app.dependency_overrides[get_prediction_service] = lambda: _Svc()
@@ -43,8 +47,11 @@ def test_get_prediction_readiness_200() -> None:
     from main import app
 
     class _Svc:
-        async def readiness(self, ticker: str, model_id: ModelId):
+        async def readiness(
+            self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+        ):
             _ = model_id
+            _ = artifact_path
             return PredictionReadinessOutcome(
                 ticker=ticker.upper(),
                 model_id="model_d",
@@ -76,8 +83,11 @@ def test_post_prediction_ensure_ready_runs_refresh_and_returns_delta() -> None:
         def __init__(self) -> None:
             self._n = 0
 
-        async def readiness(self, ticker: str, model_id: ModelId):
+        async def readiness(
+            self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+        ):
             _ = model_id
+            _ = artifact_path
             self._n += 1
             if self._n == 1:
                 return PredictionReadinessOutcome(
@@ -139,8 +149,11 @@ def test_get_prediction_status_includes_recommended_action_and_latest_job() -> N
     from main import app
 
     class _Svc:
-        async def readiness(self, ticker: str, model_id: ModelId):
+        async def readiness(
+            self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+        ):
             _ = model_id
+            _ = artifact_path
             return PredictionReadinessOutcome(
                 ticker=ticker.upper(),
                 model_id="model_d",
@@ -167,5 +180,53 @@ def test_get_prediction_status_includes_recommended_action_and_latest_job() -> N
         assert payload["recommended_action"] == "run_ensure_ready_with_etl"
         assert payload["latest_job"]["ticker"] == "AAPL"
         assert payload["freshness"]["raw_ohlcv"]["exists"] is False
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
+def test_get_prediction_accepts_champion_selector() -> None:
+    from main import app
+
+    class _Svc:
+        async def predict(
+            self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+        ):
+            from app.domain.prediction import PredictionOutcome
+
+            assert model_id == ModelId.MODEL_D
+            assert artifact_path == "/tmp/champion-model.joblib"
+            return PredictionOutcome(
+                ticker=ticker.upper(),
+                model_id=model_id.value,
+                probability=0.6,
+                signal="Buy",
+                confidence=0.2,
+                explanation={"stage": "test"},
+            )
+
+    class _Training:
+        class _State:
+            champion_run_id = "run-123"
+
+        class _Run:
+            artifact_path = "/tmp/champion-model.joblib"
+
+        async def get_lifecycle(self, model_id: str):
+            _ = model_id
+            return self._State()
+
+        async def get_status(self, run_id: str):
+            _ = run_id
+            return self._Run()
+
+    app.dependency_overrides[get_prediction_service] = lambda: _Svc()
+    app.dependency_overrides[get_training_service] = lambda: _Training()
+    try:
+        client = TestClient(app)
+        r = client.get("/api/v1/predictions/AAPL?model=champion")
+        assert r.status_code == 200
+        payload = r.json()
+        assert payload["model"] == "model_d"
     finally:
         app.dependency_overrides.clear()

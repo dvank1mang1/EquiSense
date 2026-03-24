@@ -47,16 +47,18 @@ class BaseMLModel(ABC):
             "recall": recall_score(y, y_pred),
         }
 
-    def save(self) -> None:
+    def save(self, artifact_path: str | Path | None = None) -> None:
         """Сохранить модель на диск."""
-        self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(self.model, self.model_path)
+        target = Path(artifact_path) if artifact_path is not None else self.model_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self.model, target)
 
-    def load(self) -> None:
+    def load(self, artifact_path: str | Path | None = None) -> None:
         """Загрузить модель с диска."""
-        if not self.model_path.exists():
-            raise FileNotFoundError(f"Model file not found: {self.model_path}")
-        self.model = joblib.load(self.model_path)
+        target = Path(artifact_path) if artifact_path is not None else self.model_path
+        if not target.exists():
+            raise FileNotFoundError(f"Model file not found: {target}")
+        self.model = joblib.load(target)
         self.is_trained = True
 
     def get_signal(self, probability: float) -> str:

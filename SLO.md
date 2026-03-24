@@ -30,12 +30,23 @@ This document defines service-level targets for the current stage of the platfor
    - **SLI:** non-2xx response ratio for `/api/v1/*` excluding explicit 4xx user input errors.
    - **SLO:** <= 1% per rolling 7-day window.
 
+6. **Queue Dead-letter Rate**
+   - **SLI:** share of dead-letter jobs in worker queue snapshot (`dead_letter / (completed + failed)`).
+   - **SLO:** <= 1% in rolling 24h window.
+
+7. **Queue Stale Running**
+   - **SLI:** `stale_running` from `/api/v1/jobs/worker/health` snapshot.
+   - **SLO:** 0 stale running jobs for more than 5 consecutive minutes.
+
 ## Alerting Baseline
 
 - Alert when:
   - two consecutive batch runs have success rate < 90%
   - quote freshness breaches SLO for > 10 minutes
   - prediction non-2xx breaches 2% for 15 minutes
+  - `stale_running > 0` for 5 minutes
+  - `dead_letter > 0` for 10 minutes
+  - queue failure rate > 10% for 15 minutes
 
 ## Notes
 
