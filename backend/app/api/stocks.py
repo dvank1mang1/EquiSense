@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,6 +9,7 @@ from app.contracts.data_providers import (
     MarketDataProvider,
     NewsDataProvider,
 )
+from app.data.local_artifacts import summarize_data_artifacts
 from app.data.periods import ohlcv_tail_by_period
 from app.data.persistence import (
     list_cached_ohlcv_tickers,
@@ -61,6 +63,16 @@ async def list_supported_tickers():
     """Тикеры, для которых есть локальный кэш OHLCV (Parquet)."""
     tickers = await list_cached_ohlcv_tickers()
     return {"tickers": tickers}
+
+
+@router.get("/{ticker}/artifacts")
+async def get_local_data_artifacts(ticker: str):
+    """
+    Локальные файлы raw/processed для тикера: путь, есть ли файл, размер, возраст (mtime).
+    Не требует GPU; удобно проверить кэш и ETL до запуска FinBERT.
+    """
+    sym = normalize_ticker(ticker)
+    return await asyncio.to_thread(summarize_data_artifacts, sym)
 
 
 @router.get("/{ticker}")

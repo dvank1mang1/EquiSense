@@ -146,6 +146,8 @@ Operational switches:
 
 На GPU (Linux/WSL2 с NVIDIA): задайте `FINBERT_DEVICE=cuda` или оставьте `auto`. Первый запуск скачает веса с Hugging Face.
 
+**Без GPU:** `FINBERT_DEVICE=cpu` — медленнее, но для отладки ETL достаточно. Сводка локальных файлов (raw/processed, возраст кэша): `GET /api/v1/stocks/{ticker}/artifacts`.
+
 Worker operations API:
 
 - `GET /api/v1/jobs/worker/health` — queue snapshot + stale-running health.
