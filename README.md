@@ -97,7 +97,7 @@ This is enough for early and mid-stage development if reliability controls are e
 Recommended sequence:
 
 1. **Stabilize current compose runtime**
-   - Separate `api` and background worker process (jobs/training).
+   - Separate `api` and background worker process (jobs/training). ✅
    - Keep Postgres for control-plane metadata (jobs/experiments/model registry).
    - Add regular backup policy for Postgres volume.
 
@@ -107,9 +107,16 @@ Recommended sequence:
    - Alerting from `SLO.md` thresholds (freshness, latency, failure rate).
 
 3. **Introduce queue only when needed**
+   - Current baseline: Postgres-backed queue + dedicated worker (`scripts/job_worker.py`).
    - Add Redis + task queue if job concurrency becomes a bottleneck.
    - Move long-running training/backtesting to workers.
    - Keep API latency predictable under load.
+
+Operational switches:
+
+- `EXPERIMENT_STORE_BACKEND=postgres` enables persistent experiment registry.
+- `JOB_STORE_BACKEND=postgres` enables Postgres-backed job status/lineage/metrics.
+- `JOB_QUEUE_BACKEND=postgres` enables API-to-worker background queue.
 
 4. **Return to Kubernetes only by triggers**
    - Need horizontal scaling for API/workers.

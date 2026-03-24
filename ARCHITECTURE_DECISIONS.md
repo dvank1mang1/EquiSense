@@ -44,6 +44,23 @@ This document captures intentional trade-offs for current architecture, plus mig
   - Prevent quality drift while codebase grows quickly.
   - Keep changes reviewable and safer with explicit gates.
 
+## ADR-004: Control-Plane Metadata in Postgres + Worker Queue
+
+- **Status:** Accepted
+- **Date:** 2026-03-24
+- **Decision:**
+  - Store experiments and job metadata in Postgres (with file fallback).
+  - Route background refresh jobs through a Postgres queue consumed by a dedicated worker process.
+- **Why now:**
+  - In-memory/background tasks inside API process do not survive restarts.
+  - API latency should stay predictable while long jobs run independently.
+  - This gives production-lite reliability without immediate Kubernetes migration.
+- **Implementation notes:**
+  - `EXPERIMENT_STORE_BACKEND=postgres`
+  - `JOB_STORE_BACKEND=postgres`
+  - `JOB_QUEUE_BACKEND=postgres`
+  - `docker-compose` includes a separate `worker` service running `scripts/job_worker.py`.
+
 ## Migration Triggers (when to move beyond filesystem-only)
 
 Consider introducing stronger data infrastructure (Postgres metadata tables, object storage, warehouse, or orchestrator) when one or more triggers are true:
@@ -65,7 +82,7 @@ Consider introducing stronger data infrastructure (Postgres metadata tables, obj
 
 ### 60 days
 
-- Add run metadata table (job status, started/finished, errors).
+- Add worker heartbeat and dead-job requeue policy.
 - Add structured logs and basic metrics (success/fail/latency).
 - Introduce feature schema checks before model training.
 

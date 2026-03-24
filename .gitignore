@@ -28,9 +28,11 @@ env/
 data/raw/
 data/processed/
 data/models/
+data/jobs/
 backend/data/raw/
 backend/data/processed/
 backend/data/models/
+backend/data/jobs/
 
 # ML artifacts
 *.pkl
