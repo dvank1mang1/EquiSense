@@ -1,15 +1,10 @@
 import numpy as np
 import pandas as pd
 
-from app.features.constants import TECHNICAL_FEATURES
+from app.features.constants import LAG_FEATURES, TECHNICAL_FEATURES
 
 
 class TechnicalFeatureEngineer:
-    """
-    Вычисляет технические индикаторы и признаки для ML-моделей.
-    Выход содержит колонку `date` + ровно TECHNICAL_FEATURES (совместимость с Model A).
-    """
-
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         required = {"open", "high", "low", "close", "volume"}
         missing = required - set(df.columns)
@@ -23,6 +18,7 @@ class TechnicalFeatureEngineer:
         out = out.sort_values("date").reset_index(drop=True)
 
         close = out["close"].astype(float)
+        volume = out["volume"].astype(float)
 
         out["returns"] = close.pct_change()
         out["volatility"] = out["returns"].rolling(window=20, min_periods=1).std()
@@ -40,7 +36,16 @@ class TechnicalFeatureEngineer:
         out["bb_width"] = width
         out["momentum"] = close - close.shift(10)
 
-        cols = ["date"] + TECHNICAL_FEATURES
+        out["returns_lag1"] = out["returns"].shift(1)
+        out["returns_lag2"] = out["returns"].shift(2)
+        out["returns_lag3"] = out["returns"].shift(3)
+        out["returns_lag5"] = out["returns"].shift(5)
+        out["volatility_lag5"] = out["volatility"].shift(5)
+        out["rsi_lag3"] = out["rsi"].shift(3)
+        out["volume_change"] = volume.pct_change()
+        out["volume_lag1"] = out["volume_change"].shift(1)
+
+        cols = ["date"] + TECHNICAL_FEATURES + LAG_FEATURES
         return out[cols]
 
     def _compute_rsi(self, series: pd.Series, period: int = 14) -> pd.Series:

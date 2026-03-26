@@ -59,7 +59,12 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-filterwarnings = ["ignore::DeprecationWarning"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::pyparsing.warnings.PyparsingDeprecationWarning",
+    "ignore::UserWarning:shap",
+    "ignore::UserWarning:matplotlib",
+]
 markers = [
     "unit: fast, no network IO",
     "integration: external APIs, DB, or heavy ML",

@@ -15,17 +15,32 @@ async def list_models():
     """Список доступных ML-моделей и их описания."""
     return {
         "models": [
-            {"id": "model_a", "name": "Technical Only", "features": ["technical"]},
+            {
+                "id": "baseline_lr",
+                "name": "Logistic Regression (baseline)",
+                "features": ["technical"],
+                "algorithm": "LogisticRegression",
+                "description": "Linear baseline — same technical features as Model A. "
+                "Use to quantify the non-linear gain of tree-based ensembles.",
+            },
+            {"id": "model_a", "name": "Technical Only", "features": ["technical"], "algorithm": "XGBoost"},
             {
                 "id": "model_b",
                 "name": "Technical + Fundamental",
                 "features": ["technical", "fundamental"],
+                "algorithm": "LightGBM",
             },
-            {"id": "model_c", "name": "Technical + News", "features": ["technical", "news"]},
+            {
+                "id": "model_c",
+                "name": "Technical + News",
+                "features": ["technical", "news"],
+                "algorithm": "RandomForest",
+            },
             {
                 "id": "model_d",
                 "name": "All Features",
                 "features": ["technical", "fundamental", "news"],
+                "algorithm": "XGBoost",
             },
         ]
     }

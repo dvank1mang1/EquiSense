@@ -32,6 +32,7 @@ from app.services.lifecycle_store import (
     ResilientLifecycleStore,
 )
 from app.services.prediction_service import PredictionService
+from app.services.shap_service import ShapService
 from app.services.training_service import TrainingService, get_training_registry
 
 _memory_experiment_store = InMemoryExperimentStore()
@@ -90,6 +91,12 @@ def get_prediction_service(
         market=MarketDataClient(http=get_http_client(request)),
         features=features,
     )
+
+
+def get_shap_service(
+    features: FeatureStorePort = Depends(get_feature_store),
+) -> ShapService:
+    return ShapService(features=features)
 
 
 def get_backtesting_service(request: Request) -> BacktestingService:

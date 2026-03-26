@@ -17,19 +17,24 @@ from app.domain.identifiers import ModelId
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
 from app.schemas.prediction import (
     EnsureReadyResponse,
+    GroupContributions,
     PredictionReadinessResponse,
     PredictionResponse,
     PredictionStatusResponse,
     ReadinessCheck,
+    ShapExplanation,
+    ShapFeature,
     Signal,
 )
 from app.services.dependencies import (
     get_batch_refresh_orchestrator,
     get_job_store,
     get_prediction_service,
+    get_shap_service,
     get_training_service,
 )
 from app.services.prediction_service import PredictionService
+from app.services.shap_service import ShapService
 from app.services.training_service import TrainingService
 
 router = APIRouter()
@@ -140,13 +145,30 @@ async def compare_models(ticker: str):
     }
 
 
-@router.get("/{ticker}/shap")
+@router.get("/{ticker}/shap", response_model=ShapExplanation)
 async def get_shap_explanation(
     ticker: str,
     model: ModelId = Query(default=ModelId.MODEL_D),
+    top_n: int = Query(default=10, ge=1, le=50),
+    shap_svc: ShapService = Depends(get_shap_service),
 ):
-    """SHAP values для объяснения предсказания."""
-    return {"ticker": ticker.upper(), "model": model.value, "shap_values": {}}
+    try:
+        outcome = await shap_svc.explain(ticker, model, top_n=top_n)
+    except ModelArtifactMissingError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except FeatureDataMissingError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except UnknownModelError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    return ShapExplanation(
+        ticker=outcome.ticker,
+        model=outcome.model_id,
+        features=[ShapFeature(**f) for f in outcome.features],
+        base_value=outcome.base_value,
+        prediction=outcome.prediction,
+        group_contributions=GroupContributions(**outcome.group_contributions),
+    )
 
 
 @router.get("/{ticker}/readiness", response_model=PredictionReadinessResponse)

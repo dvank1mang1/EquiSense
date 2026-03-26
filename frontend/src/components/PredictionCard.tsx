@@ -2,6 +2,7 @@ import { usePrediction } from "@/hooks/usePrediction";
 import clsx from "clsx";
 
 const MODELS = [
+  { id: "baseline_lr", label: "LR: Baseline" },
   { id: "model_a", label: "A: Tech" },
   { id: "model_b", label: "B: Tech+Fund" },
   { id: "model_c", label: "C: Tech+News" },

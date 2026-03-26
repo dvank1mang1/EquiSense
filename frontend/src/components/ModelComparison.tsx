@@ -17,6 +17,7 @@ export default function ModelComparison({ ticker }: ModelComparisonProps) {
   const { data, isLoading } = useModelComparison(ticker);
 
   const models = [
+    { id: "baseline_lr", label: "LR: Baseline (linear)" },
     { id: "model_a", label: "A: Technical Only" },
     { id: "model_b", label: "B: Tech + Fundamental" },
     { id: "model_c", label: "C: Tech + News" },

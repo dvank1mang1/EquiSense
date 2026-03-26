@@ -51,8 +51,13 @@ class ModelComparisonResponse(BaseModel):
 
 class ShapFeature(BaseModel):
     name: str
-    value: float
     shap_value: float
+
+
+class GroupContributions(BaseModel):
+    technical: float
+    fundamental: float
+    news: float
 
 
 class ShapExplanation(BaseModel):
@@ -61,6 +66,7 @@ class ShapExplanation(BaseModel):
     features: list[ShapFeature]
     base_value: float
     prediction: float
+    group_contributions: GroupContributions
 
 
 class ReadinessCheck(BaseModel):
