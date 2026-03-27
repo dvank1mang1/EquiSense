@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 
 from app.domain.exceptions import BacktestDependencyError, BacktestInputError
 from app.domain.identifiers import ModelId
@@ -66,17 +67,36 @@ async def run_backtest(
     initial_capital: float = Query(10000.0, ge=100),
     service: BacktestingService = Depends(get_backtesting_service),
 ):
+    sym = ticker.strip().upper()
+    logger.info(
+        "backtesting.run start ticker={} model={} start={} end={} initial_capital={}",
+        sym,
+        model.value,
+        start_date,
+        end_date,
+        initial_capital,
+    )
     try:
-        return await service.run_single(
+        resp = await service.run_single(
             ticker=ticker,
             model=model,
             start_date=start_date,
             end_date=end_date,
             initial_capital=initial_capital,
         )
+        logger.info(
+            "backtesting.run done ticker={} model={} sharpe={} trades={}",
+            sym,
+            model.value,
+            resp.metrics.sharpe_ratio,
+            resp.metrics.total_trades,
+        )
+        return resp
     except BacktestDependencyError as e:
+        logger.warning("backtesting.run dependency_error ticker={} model={} err={}", sym, model.value, e)
         raise HTTPException(status_code=404, detail=str(e)) from e
     except BacktestInputError as e:
+        logger.warning("backtesting.run input_error ticker={} model={} err={}", sym, model.value, e)
         raise HTTPException(status_code=422, detail=str(e)) from e
 
 
@@ -126,6 +146,14 @@ async def compare_backtest_models(
     service: BacktestingService = Depends(get_backtesting_service),
 ):
     """Сравнение backtesting результатов всех 4 моделей."""
+    sym = ticker.strip().upper()
+    logger.info(
+        "backtesting.compare start ticker={} start={} end={} initial_capital={}",
+        sym,
+        start_date,
+        end_date,
+        initial_capital,
+    )
     rows = await service.compare_models(
         ticker=ticker,
         start_date=start_date,
@@ -150,7 +178,10 @@ async def compare_backtest_models(
             metrics=metrics,
             error=v.error,
         )
-    return BacktestCompareResponse(
+    resp = BacktestCompareResponse(
         ticker=ticker.strip().upper(),
         comparison=comparison,
     )
+    ok_count = sum(1 for row in comparison.values() if row.ok)
+    logger.info("backtesting.compare done ticker={} ok_models={}/4", sym, ok_count)
+    return resp

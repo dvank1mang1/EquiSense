@@ -2,6 +2,7 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.contracts.data_providers import (
@@ -23,6 +24,7 @@ from app.domain.exceptions import (
     DataProviderError,
     UpstreamRateLimitError,
 )
+from app.features.technical import TechnicalFeatureEngineer
 from app.services.dependencies import (
     get_fundamental_data_provider,
     get_market_data_provider,
@@ -83,6 +85,7 @@ async def get_stock_overview(
 ):
     """Котировка (Alpha Vantage) + снимок фундаментала; при отсутствии ключа — цена из кэша OHLCV."""
     sym = normalize_ticker(ticker)
+    logger.info("stocks.overview start ticker={}", sym)
     quote: dict[str, Any] | None = None
     quote_meta: dict[str, str] = {}
 
@@ -125,6 +128,17 @@ def pd_ts_to_date_str(d: Any) -> str:
     return str(d)[:10]
 
 
+def _to_finite_float(v: Any) -> float | None:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    # NaN check without importing math.
+    if x != x:
+        return None
+    return x
+
+
 @router.get("/{ticker}/history")
 async def get_price_history(
     ticker: str,
@@ -133,17 +147,21 @@ async def get_price_history(
 ):
     """OHLCV; источник — API или локальный Parquet."""
     sym = normalize_ticker(ticker)
-    try:
-        df = await market.get_daily_ohlcv(ticker, output_size="full", skip_cache=False)
-    except DataProviderConfigError:
-        df = await read_ohlcv_parquet(sym)
-        if df is None or df.empty:
+    logger.info("stocks.history start ticker={} period={}", sym, period or "1y")
+    # Prefer local cache for stability under load; fallback to upstream only if cache is absent.
+    cached = await read_ohlcv_parquet(sym)
+    if cached is not None and not cached.empty:
+        df = cached
+    else:
+        try:
+            df = await market.get_daily_ohlcv(ticker, output_size="full", skip_cache=False)
+        except DataProviderConfigError:
             raise HTTPException(
                 status_code=503,
                 detail="No API key and no cached OHLCV for this ticker.",
             ) from None
-    except (DataProviderError, UpstreamRateLimitError) as e:
-        _raise_http_from_data_error(e)
+        except (DataProviderError, UpstreamRateLimitError) as e:
+            _raise_http_from_data_error(e)
 
     if period and period not in ("1m", "3m", "6m", "1y", "2y", "max"):
         raise HTTPException(status_code=422, detail="Invalid period")
@@ -195,6 +213,15 @@ async def refresh_stock_data(
 ):
     """Принудительное обновление кэшей OHLCV / фундаментала / котировки (с учётом rate limit)."""
     sym = normalize_ticker(ticker)
+    logger.info(
+        "stocks.refresh start ticker={} ohlcv={} fundamentals={} quote={} news={} force_full={}",
+        sym,
+        body.ohlcv,
+        body.fundamentals,
+        body.quote,
+        body.news,
+        body.force_full,
+    )
     result: dict[str, Any] = {
         "ticker": sym,
         "ohlcv": None,
@@ -235,15 +262,49 @@ async def refresh_stock_data(
             result["news"] = {"cached_path": str(path), "count": len(items)}
         except (DataProviderError, UpstreamRateLimitError) as e:
             _raise_http_from_data_error(e)
-
+    logger.info("stocks.refresh done ticker={}", sym)
     return result
 
 
 @router.get("/{ticker}/indicators")
-async def get_technical_indicators(ticker: str):
-    """Индикаторы появятся после слоя feature engineering (см. /history + FE)."""
-    return {
-        "ticker": normalize_ticker(ticker),
-        "indicators": {},
-        "note": "Use processed features from FeatureStore once technical.py is wired.",
+async def get_technical_indicators(
+    ticker: str,
+    market: MarketDataProvider = Depends(get_market_data_provider),
+):
+    """Текущие technical indicators из OHLCV (кэш или провайдер)."""
+    sym = normalize_ticker(ticker)
+    logger.info("stocks.indicators start ticker={}", sym)
+    df = await read_ohlcv_parquet(sym)
+    if df is None or df.empty:
+        try:
+            df = await market.get_daily_ohlcv(sym, output_size="full", skip_cache=False)
+        except (DataProviderConfigError, DataProviderError, UpstreamRateLimitError) as e:
+            _raise_http_from_data_error(e)
+
+    if df is None or df.empty:
+        raise HTTPException(status_code=503, detail="No OHLCV data available for indicator calculation.")
+
+    engineer = TechnicalFeatureEngineer()
+    feats = await asyncio.to_thread(engineer.compute, df)
+    if feats.empty:
+        raise HTTPException(status_code=503, detail="Technical features are empty.")
+    last = feats.iloc[-1]
+    payload = {
+        "ticker": sym,
+        "date": pd_ts_to_date_str(last["date"]),
+        "returns": _to_finite_float(last.get("returns")),
+        "volatility": _to_finite_float(last.get("volatility")),
+        "rsi": _to_finite_float(last.get("rsi")),
+        "macd": _to_finite_float(last.get("macd")),
+        "macd_signal": _to_finite_float(last.get("macd_signal")),
+        "macd_hist": _to_finite_float(last.get("macd_hist")),
+        "sma_20": _to_finite_float(last.get("sma_20")),
+        "sma_50": _to_finite_float(last.get("sma_50")),
+        "sma_200": _to_finite_float(last.get("sma_200")),
+        "bb_upper": _to_finite_float(last.get("bb_upper")),
+        "bb_lower": _to_finite_float(last.get("bb_lower")),
+        "bb_width": _to_finite_float(last.get("bb_width")),
+        "momentum": _to_finite_float(last.get("momentum")),
     }
+    logger.info("stocks.indicators done ticker={} date={}", sym, payload["date"])
+    return payload

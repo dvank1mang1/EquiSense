@@ -4,6 +4,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.contracts.jobs import JobStore
@@ -67,6 +68,13 @@ async def refresh_universe(
     registry: InMemoryJobRegistry = Depends(get_job_registry),
     store: JobStore = Depends(get_job_store),
 ):
+    logger.info(
+        "jobs.refresh_universe start tickers={} background={} run_etl={} refresh_news={}",
+        len(body.tickers),
+        body.background,
+        body.run_etl,
+        body.refresh_news,
+    )
     orchestrator = BatchRefreshOrchestrator(
         market=base_orchestrator._market,  # controlled adaptation for per-run retry settings
         fundamentals=base_orchestrator._fundamentals,
@@ -110,6 +118,7 @@ async def refresh_universe(
         }
 
     status_path, lineage_path = await _run_job(orchestrator, body, run_id)
+    logger.info("jobs.refresh_universe done run_id={} mode=sync", run_id)
     return {
         "run_id": run_id,
         "status": "completed",
@@ -167,6 +176,7 @@ async def get_refresh_universe_lineage(
 
 @router.get("/worker/health")
 async def get_worker_health():
+    logger.info("jobs.worker.health check")
     snapshot = await asyncio.to_thread(
         safe_queue_snapshot,
         stale_after_sec=max(5, settings.job_queue_stale_after_sec),
@@ -186,6 +196,7 @@ async def get_worker_health():
 
 @router.get("/worker/metrics")
 async def get_worker_metrics():
+    logger.info("jobs.worker.metrics check")
     snapshot = await asyncio.to_thread(
         safe_queue_snapshot,
         stale_after_sec=max(5, settings.job_queue_stale_after_sec),
@@ -233,6 +244,7 @@ async def list_dead_letter(limit: int = Query(100, ge=1, le=1000)):
 
 @router.post("/worker/dead-letter/{run_id}/requeue")
 async def requeue_dead_letter(run_id: str):
+    logger.info("jobs.worker.requeue run_id={}", run_id)
     ok = await asyncio.to_thread(safe_requeue_failed, run_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Dead-letter run id not found")

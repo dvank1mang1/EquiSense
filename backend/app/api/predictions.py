@@ -2,9 +2,10 @@ import asyncio
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from pydantic import BaseModel
 
 from app.contracts.jobs import JobStore
@@ -99,16 +100,21 @@ async def get_prediction(
     Прогноз вероятности роста акции.
     Возвращает: сигнал (Strong Buy/Buy/Hold/Sell), probability, confidence, объяснение.
     """
+    sym = ticker.strip().upper()
+    logger.info("predictions.get start ticker={} model={}", sym, model)
     selection = await _resolve_model_selector(model, training)
     try:
         outcome = await service.predict(
             ticker, selection.model_id, artifact_path=selection.artifact_path
         )
     except UnknownModelError as e:
+        logger.warning("predictions.get unknown_model ticker={} model={} err={}", sym, model, e)
         raise HTTPException(status_code=422, detail=str(e)) from e
     except ModelArtifactMissingError as e:
+        logger.warning("predictions.get missing_artifact ticker={} model={} err={}", sym, model, e)
         raise HTTPException(status_code=404, detail=str(e)) from e
     except FeatureDataMissingError as e:
+        logger.warning("predictions.get missing_features ticker={} model={} err={}", sym, model, e)
         raise HTTPException(status_code=503, detail=str(e)) from e
 
     sig: Signal | None = None
@@ -118,7 +124,7 @@ async def get_prediction(
         except ValueError:
             sig = None
 
-    return PredictionResponse(
+    resp = PredictionResponse(
         ticker=outcome.ticker,
         model=outcome.model_id,
         signal=sig,
@@ -129,19 +135,81 @@ async def get_prediction(
             "resolved_run_id": selection.champion_run_id,
         },
     )
+    logger.info(
+        "predictions.get done ticker={} resolved_model={} signal={} confidence={}",
+        sym,
+        resp.model,
+        resp.signal,
+        resp.confidence,
+    )
+    return resp
 
 
 @router.get("/{ticker}/compare")
-async def compare_models(ticker: str):
-    """Сравнение всех 4 моделей (A, B, C, D) по метрикам и сигналам."""
+async def compare_models(
+    ticker: str,
+    service: PredictionService = Depends(get_prediction_service),
+):
+    """Сравнение всех 4 моделей (A, B, C, D) по сигналам и вероятности."""
+    sym = ticker.strip().upper()
+    logger.info("predictions.compare start ticker={}", sym)
+    comparison: dict[str, dict[str, Any]] = {}
+    for mid in (ModelId.MODEL_A, ModelId.MODEL_B, ModelId.MODEL_C, ModelId.MODEL_D):
+        try:
+            out = await service.predict(sym, mid)
+            sig: Signal | None = None
+            if out.signal:
+                try:
+                    sig = Signal(out.signal)
+                except ValueError:
+                    sig = None
+            comparison[mid.value] = {
+                "ok": True,
+                "signal": sig.value if sig is not None else out.signal,
+                "probability": out.probability,
+                "confidence": out.confidence,
+                # Placeholder for future offline evaluation registry.
+                "f1": None,
+                "roc_auc": None,
+                "error": None,
+            }
+        except (UnknownModelError, ModelArtifactMissingError, FeatureDataMissingError) as e:
+            comparison[mid.value] = {
+                "ok": False,
+                "signal": None,
+                "probability": None,
+                "confidence": None,
+                "f1": None,
+                "roc_auc": None,
+                "error": str(e),
+            }
+            logger.warning(
+                "predictions.compare model_failed ticker={} model={} err={}",
+                sym,
+                mid.value,
+                e,
+            )
+        except Exception as e:  # noqa: BLE001
+            comparison[mid.value] = {
+                "ok": False,
+                "signal": None,
+                "probability": None,
+                "confidence": None,
+                "f1": None,
+                "roc_auc": None,
+                "error": f"internal_error: {e}",
+            }
+            logger.exception(
+                "predictions.compare unexpected_error ticker={} model={} err={}",
+                sym,
+                mid.value,
+                e,
+            )
+    ok_count = sum(1 for row in comparison.values() if bool(row.get("ok", False)))
+    logger.info("predictions.compare done ticker={} ok_models={}/4", sym, ok_count)
     return {
-        "ticker": ticker.upper(),
-        "comparison": {
-            "model_a": {},
-            "model_b": {},
-            "model_c": {},
-            "model_d": {},
-        },
+        "ticker": sym,
+        "comparison": comparison,
     }
 
 
@@ -182,18 +250,22 @@ async def get_prediction_readiness(
     training: TrainingService = Depends(get_training_service),
 ):
     """Readiness checks for prediction dependencies (raw/processed/model artifact)."""
+    sym = ticker.strip().upper()
+    logger.info("predictions.readiness start ticker={} model={}", sym, model)
     selection = await _resolve_model_selector(model, training)
     out = await service.readiness(ticker, selection.model_id, artifact_path=selection.artifact_path)
     checks = {
         k: ReadinessCheck(ok=bool(v.get("ok", False)), detail=str(v.get("detail", "")))
         for k, v in out.checks.items()
     }
-    return PredictionReadinessResponse(
+    resp = PredictionReadinessResponse(
         ticker=out.ticker,
         model=out.model_id,
         ready=out.ready,
         checks=checks,
     )
+    logger.info("predictions.readiness done ticker={} ready={}", sym, resp.ready)
+    return resp
 
 
 class EnsureReadyBody(BaseModel):
@@ -252,6 +324,14 @@ async def ensure_prediction_ready(
     2) run one-ticker refresh workflow (optionally ETL)
     3) read readiness again and return before/after delta
     """
+    sym = ticker.strip().upper()
+    logger.info(
+        "predictions.ensure_ready start ticker={} model={} run_etl={} force_full={}",
+        sym,
+        model,
+        body.run_etl,
+        body.force_full,
+    )
     selection = await _resolve_model_selector(model, training)
     before = await service.readiness(
         ticker, selection.model_id, artifact_path=selection.artifact_path
@@ -276,7 +356,7 @@ async def ensure_prediction_ready(
         k: ReadinessCheck(ok=bool(v.get("ok", False)), detail=str(v.get("detail", "")))
         for k, v in after.checks.items()
     }
-    return EnsureReadyResponse(
+    resp = EnsureReadyResponse(
         ticker=after.ticker,
         model=after.model_id,
         before_ready=before.ready,
@@ -288,6 +368,14 @@ async def ensure_prediction_ready(
         checks_before=checks_before,
         checks_after=checks_after,
     )
+    logger.info(
+        "predictions.ensure_ready done ticker={} before_ready={} after_ready={} run_id={}",
+        sym,
+        resp.before_ready,
+        resp.after_ready,
+        resp.run_id,
+    )
+    return resp
 
 
 @router.get(
@@ -309,6 +397,8 @@ async def get_prediction_status(
     Operational status for one ticker in one response:
     readiness + freshness + latest job row + recommended action.
     """
+    sym = ticker.strip().upper()
+    logger.info("predictions.status start ticker={} model={}", sym, model)
     selection = await _resolve_model_selector(model, training)
     out = await service.readiness(ticker, selection.model_id, artifact_path=selection.artifact_path)
     checks = out.checks
@@ -328,7 +418,7 @@ async def get_prediction_status(
         for k, v in checks.items()
     }
     latest_job = await asyncio.to_thread(store.latest_lineage_for_ticker, out.ticker)
-    return PredictionStatusResponse(
+    resp = PredictionStatusResponse(
         ticker=out.ticker,
         model=out.model_id,
         ready=out.ready,
@@ -337,3 +427,10 @@ async def get_prediction_status(
         freshness=freshness,
         latest_job=latest_job,
     )
+    logger.info(
+        "predictions.status done ticker={} ready={} recommended_action={}",
+        sym,
+        resp.ready,
+        resp.recommended_action,
+    )
+    return resp

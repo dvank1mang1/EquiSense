@@ -1,6 +1,7 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.identifiers import ModelId
@@ -133,17 +134,20 @@ async def train_model(
     service: TrainingService = Depends(get_training_service),
 ):
     """Запустить обучение модели (фоновая задача) и вернуть run_id."""
+    logger.info("models.train start model_id={} ticker={}", model_id, body.ticker.strip().upper())
     try:
         mid = ModelId(model_id)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Unknown model id: {model_id!r}") from e
     run = await service.start_training(mid, body.ticker)
-    return TrainModelResponse(
+    resp = TrainModelResponse(
         run_id=run.run_id,
         model_id=run.model_id,
         ticker=run.ticker,
         status=run.status,
     )
+    logger.info("models.train queued model_id={} ticker={} run_id={}", resp.model_id, resp.ticker, resp.run_id)
+    return resp
 
 
 @router.get("/{model_id}/train/{run_id}")
@@ -153,6 +157,7 @@ async def get_train_status(
     service: TrainingService = Depends(get_training_service),
 ):
     _ = model_id
+    logger.info("models.train_status get model_id={} run_id={}", model_id, run_id)
     run = await service.get_status(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Unknown training run id: {run_id}")
@@ -212,6 +217,12 @@ async def promote_model_champion(
     body: PromoteChampionBody,
     service: TrainingService = Depends(get_training_service),
 ):
+    logger.info(
+        "models.promote start model_id={} run_id={} reason={}",
+        model_id,
+        run_id,
+        body.reason,
+    )
     try:
         _ = ModelId(model_id)
     except ValueError as e:
@@ -220,12 +231,18 @@ async def promote_model_champion(
         state = await service.promote_champion(model_id, run_id, reason=body.reason)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
-    return ModelLifecycleResponse(
+    resp = ModelLifecycleResponse(
         model_id=state.model_id,
         champion_run_id=state.champion_run_id,
         updated_at=state.updated_at,
         history=state.history,
     )
+    logger.info(
+        "models.promote done model_id={} champion_run_id={}",
+        resp.model_id,
+        resp.champion_run_id,
+    )
+    return resp
 
 
 @router.get("/{model_id}/experiments", response_model=ExperimentListResponse)

@@ -230,3 +230,52 @@ def test_get_prediction_accepts_champion_selector() -> None:
         assert payload["model"] == "model_d"
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
+def test_get_prediction_compare_returns_mixed_model_results() -> None:
+    from main import app
+
+    class _Svc:
+        async def predict(
+            self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+        ):
+            from app.domain.prediction import PredictionOutcome
+
+            _ = artifact_path
+            if model_id == ModelId.MODEL_C:
+                raise FeatureDataMissingError("missing combined features")
+            p_map = {
+                ModelId.MODEL_A: 0.55,
+                ModelId.MODEL_B: 0.62,
+                ModelId.MODEL_D: 0.48,
+            }
+            signal_map = {
+                ModelId.MODEL_A: "Buy",
+                ModelId.MODEL_B: "Strong Buy",
+                ModelId.MODEL_D: "Hold",
+            }
+            return PredictionOutcome(
+                ticker=ticker.upper(),
+                model_id=model_id.value,
+                probability=p_map[model_id],
+                signal=signal_map[model_id],
+                confidence=abs(p_map[model_id] - 0.5) * 2.0,
+                explanation={"stage": "test"},
+            )
+
+    app.dependency_overrides[get_prediction_service] = lambda: _Svc()
+    try:
+        client = TestClient(app)
+        r = client.get("/api/v1/predictions/AAPL/compare")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ticker"] == "AAPL"
+        assert body["comparison"]["model_a"]["ok"] is True
+        assert body["comparison"]["model_a"]["signal"] == "Buy"
+        assert body["comparison"]["model_b"]["probability"] == pytest.approx(0.62, rel=1e-6)
+        assert body["comparison"]["model_c"]["ok"] is False
+        assert "missing" in body["comparison"]["model_c"]["error"].lower()
+        assert body["comparison"]["model_d"]["signal"] == "Hold"
+    finally:
+        app.dependency_overrides.clear()

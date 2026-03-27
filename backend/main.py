@@ -1,15 +1,16 @@
-from contextlib import asynccontextmanager
+import time
 import uuid
+from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 
+from app.api import router as api_router
 from app.core.config import settings
 from app.core.logging import setup_logging
-from app.api import router as api_router
 
 
 @asynccontextmanager
@@ -46,7 +47,35 @@ app.add_middleware(
 async def request_id_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
-    response = await call_next(request)
+    started = time.perf_counter()
+    method = request.method
+    path = request.url.path
+    client_ip = request.client.host if request.client else "-"
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+        logger.bind(
+            request_id=request_id,
+            method=method,
+            path=path,
+            client_ip=client_ip,
+            duration_ms=duration_ms,
+        ).exception("HTTP request failed")
+        raise
+
+    duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
+    status_code = response.status_code
+    log = logger.warning if status_code >= 500 else logger.info
+    log(
+        "HTTP {method} {path} -> {status_code} ({duration_ms} ms) [request_id={request_id}, client_ip={client_ip}]",
+        method=method,
+        path=path,
+        status_code=status_code,
+        duration_ms=duration_ms,
+        request_id=request_id,
+        client_ip=client_ip,
+    )
     response.headers["X-Request-ID"] = request_id
     return response
 
@@ -54,6 +83,13 @@ async def request_id_middleware(request: Request, call_next):
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     request_id = getattr(request.state, "request_id", "unknown")
+    logger.warning(
+        "HTTPException {status_code} on {path} [request_id={request_id}]: {detail}",
+        status_code=exc.status_code,
+        path=request.url.path,
+        request_id=request_id,
+        detail=str(exc.detail),
+    )
     code = f"http_{exc.status_code}"
     payload = {
         "error": {
