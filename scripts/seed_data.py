@@ -1,32 +1,27 @@
 """
-Скрипт для первоначальной загрузки данных по всем тикерам.
-
-Использование:
-    python scripts/seed_data.py
+Тонкая обёртка: см. backend/scripts/download_ohlcv_dataset.py (plotly-demo, stooq, csv).
 """
 
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
-
-TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
-    "META", "TSLA", "JPM", "JNJ", "V",
-]
+_ROOT = Path(__file__).resolve().parent.parent
+_BACKEND = _ROOT / "backend"
+_SCRIPT = _BACKEND / "scripts" / "download_ohlcv_dataset.py"
 
 
-def seed_ticker(ticker: str) -> None:
-    print(f"[{ticker}] Fetching data...")
-    # TODO: реализовать после data ingestion
-    # from app.data import MarketDataClient, FundamentalDataClient, NewsDataClient
-    raise NotImplementedError("Реализуй после data ingestion")
-
-
-def main():
-    for ticker in TICKERS:
-        seed_ticker(ticker)
-    print("Done.")
+def main() -> None:
+    uv = shutil.which("uv")
+    cmd: list[str]
+    if uv:
+        cmd = [uv, "run", "python", str(_SCRIPT), "plotly-demo", "--run-etl"]
+    else:
+        cmd = [sys.executable, str(_SCRIPT), "plotly-demo", "--run-etl"]
+    print("Running:", " ".join(cmd))
+    r = subprocess.run(cmd, cwd=str(_BACKEND), check=False)
+    sys.exit(r.returncode)
 
 
 if __name__ == "__main__":

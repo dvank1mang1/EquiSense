@@ -43,7 +43,7 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - **Данные:** адаптеры Alpha Vantage (OHLCV, quote, OVERVIEW), новости (Finnhub / NewsAPI), кэш на диске: Parquet для OHLCV, JSON для фундаментала и котировок.
 - **Фичи:** technical / fundamental engineering, **sentiment (FinBERT)** → `FeatureStore` (Parquet под `data/processed/…`).
 - **ML:** несколько моделей, сервис предсказаний с тяжёлым кодом в `asyncio.to_thread`, readiness/ensure-ready/status контур для тикера, backtesting API; champion-артефакты по `run_id`, lifecycle store (memory/postgres).
-- **Тесты:** unit + integration; локально/CI: `uv run pytest tests -q` — **40 passed** (на момент обновления документа).
+- **Тесты:** unit + integration; локально/CI: `uv run pytest tests -q` (см. актуальный счётчик в CI / после `pytest`).
 
 ### Недавние доработки слоя данных
 
@@ -83,6 +83,28 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - **Champion → артефакт inference:** обучение пишет run-scoped `model.joblib`, promote задаёт champion; predictions с селектором `champion` / `champion:model_a` грузят именно этот артефакт.
 - **Lifecycle persistence:** `LIFECYCLE_STORE_BACKEND=postgres` + таблицы `model_lifecycle` / `model_lifecycle_history` (с resilient fallback).
 - **FinBERT sentiment ETL:** `raw/news/{TICKER}.json` → `SentimentFeatureEngineer` (lazy load, `FINBERT_DEVICE` auto/cpu/cuda) → `processed/.../sentiment.parquet`; batch refresh при `run_etl` всегда вызывает `run_sentiment`; флаг **`refresh_news`** подтягивает новости перед ETL. Скрипт: `scripts/refresh_universe.py --run-etl --refresh-news`.
+- **Research stack hardening (ML):**
+  - Добавлен **CPCV (Combinatorial Purged CV)** в `backend/app/ml/cv.py`: `combinatorial_purged_cv_splits(...)` с purge-окном `gap = label_horizon_days + embargo_days`, ограничением `max_splits` и seed-based sampling комбинаций.
+  - Добавлены **OOF primary probabilities** для meta-labeling в `backend/app/ml/oof.py`: `oof_primary_proba(...)`; в research pack meta-модель учится на OOF-скоринге primary-модели (с fallback на val при недостатке строк).
+  - Добавлен **SPA-lite** в `backend/app/ml/spa_lite.py`: `block_bootstrap_mean_pvalue(...)` (circular block bootstrap для p-value по среднему excess-return относительно benchmark).
+  - `notebooks/run_research_pack.py` расширен CLI-параметрами `--cpcv-groups`, `--cpcv-max-splits`, `--spa-bootstrap`; результаты сохраняются в `cv_fold_metrics.csv` (`split_name=cpcv`), `cv_summary.csv` (`cpcv_mean_auc`, `cpcv_std_auc`), `spa_lite_holdout.csv` и поля `spa_*` в `backtest_stats.csv`.
+  - Для ML-модулей добавлены/обновлены unit-тесты в `backend/tests/unit/test_ml_finance.py` (CPCV и SPA-lite), локально: `10 passed`.
+
+### Production training (API) — `TrainingService` + `app/ml/training_pipeline.py`
+
+Обучение по `POST /api/v1/models/{model_id}/train` для тикера:
+
+| Этап | Что делается |
+|------|----------------|
+| **Данные** | `FeatureStore.build_combined(ticker)` → таргет: знак **следующего** дневного `returns` (согласовано с `returns` = `close.pct_change()` в technical). |
+| **Сплит** | Хронологический по долям времени (`TRAINING_SPLIT_TRAIN_FRACTION`, `TRAINING_SPLIT_VAL_END_FRACTION`, по умолчанию ~70/15/15); `TRAINING_MIN_ROWS` — минимум строк; дубликаты `date` схлопываются. |
+| **Препроцессинг** | `SimpleImputer(median)` на train в `Pipeline` до модели; баланс классов для деревьев/бустингов (`scale_pos_weight` / `class_weight`). |
+| **Калибровка** | На **validation**: `CalibratedClassifierCV(..., cv="prefit", method="isotonic")`; порог размера val — `TRAINING_CALIBRATION_MIN_VAL_SAMPLES`. В metrics: `calibration` (код, напр. `isotonic_applied`, `skipped_val_lt_50`) и `calibration_isotonic`. Ошибки fit логируются и дают `skipped_calibrator_fit_error`. |
+| **Логи** | Успех: `loguru` info с `roc_auc` и статусом калибровки; падение: `logger.exception` со stack trace. |
+| **Оценка** | Метрики на **test**: `f1`, `roc_auc`, `pr_auc`, `brier`, precision, recall + строки и даты по сплитам. |
+| **Артефакт** | `model.joblib` под run (imputer + при необходимости калибратор). |
+
+**Исследования (офлайн):** `notebooks/run_research_pack.py` → `notebooks/results/`; оглавление файлов: `notebooks/RESEARCH_OUTPUTS.md`; итоговый текст: `RESEARCH_SUMMARY.md`; ссылки на статьи: `notebooks/LITERATURE_REVIEW.md`.
 
 ---
 

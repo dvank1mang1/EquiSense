@@ -35,17 +35,33 @@ class BaseMLModel(ABC):
         return (self.predict_proba(X)[:, 1] >= 0.5).astype(int)
 
     def evaluate(self, X: pd.DataFrame, y: pd.Series) -> dict:
-        """Рассчитать метрики: F1, ROC-AUC, Precision, Recall."""
-        from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
+        """Метрики: F1, ROC-AUC, PR-AUC, Brier, precision, recall."""
+        from sklearn.metrics import (
+            average_precision_score,
+            brier_score_loss,
+            f1_score,
+            precision_score,
+            recall_score,
+            roc_auc_score,
+        )
 
         y_pred = self.predict(X)
         y_proba = self.predict_proba(X)[:, 1]
-        return {
-            "f1": f1_score(y, y_pred),
-            "roc_auc": roc_auc_score(y, y_proba),
-            "precision": precision_score(y, y_pred),
-            "recall": recall_score(y, y_pred),
+        out: dict[str, float] = {
+            "f1": float(f1_score(y, y_pred)),
+            "roc_auc": float(roc_auc_score(y, y_proba)),
+            "precision": float(precision_score(y, y_pred)),
+            "recall": float(recall_score(y, y_pred)),
         }
+        try:
+            out["brier"] = float(brier_score_loss(y, y_proba))
+        except ValueError:
+            out["brier"] = float("nan")
+        try:
+            out["pr_auc"] = float(average_precision_score(y, y_proba))
+        except ValueError:
+            out["pr_auc"] = float("nan")
+        return out
 
     def save(self, artifact_path: str | Path | None = None) -> None:
         """Сохранить модель на диск."""

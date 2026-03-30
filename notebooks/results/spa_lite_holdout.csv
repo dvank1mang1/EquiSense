@@ -1,0 +1,2 @@
+observed_mean,p_value_one_sided,bootstrap_mean,bootstrap_std,n_bootstrap,block_len
+-0.00018627359680978178,0.504,-0.00018576366184419355,5.4603480325416694e-05,2000,5

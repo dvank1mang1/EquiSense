@@ -14,7 +14,7 @@ from app.domain.exceptions import (
     ModelArtifactMissingError,
     UnknownModelError,
 )
-from app.domain.identifiers import ModelId
+from app.domain.identifiers import ROLLOUT_MODEL_IDS, ModelId
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
 from app.schemas.prediction import (
     EnsureReadyResponse,
@@ -150,11 +150,11 @@ async def compare_models(
     ticker: str,
     service: PredictionService = Depends(get_prediction_service),
 ):
-    """Сравнение всех 4 моделей (A, B, C, D) по сигналам и вероятности."""
+    """Сравнение rollout-моделей (A–F) по сигналам и вероятности."""
     sym = ticker.strip().upper()
     logger.info("predictions.compare start ticker={}", sym)
     comparison: dict[str, dict[str, Any]] = {}
-    for mid in (ModelId.MODEL_A, ModelId.MODEL_B, ModelId.MODEL_C, ModelId.MODEL_D):
+    for mid in ROLLOUT_MODEL_IDS:
         try:
             out = await service.predict(sym, mid)
             sig: Signal | None = None
@@ -206,7 +206,12 @@ async def compare_models(
                 e,
             )
     ok_count = sum(1 for row in comparison.values() if bool(row.get("ok", False)))
-    logger.info("predictions.compare done ticker={} ok_models={}/4", sym, ok_count)
+    logger.info(
+        "predictions.compare done ticker={} ok_models={}/{}",
+        sym,
+        ok_count,
+        len(ROLLOUT_MODEL_IDS),
+    )
     return {
         "ticker": sym,
         "comparison": comparison,

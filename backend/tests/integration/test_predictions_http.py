@@ -249,11 +249,15 @@ def test_get_prediction_compare_returns_mixed_model_results() -> None:
                 ModelId.MODEL_A: 0.55,
                 ModelId.MODEL_B: 0.62,
                 ModelId.MODEL_D: 0.48,
+                ModelId.MODEL_E: 0.52,
+                ModelId.MODEL_F: 0.58,
             }
             signal_map = {
                 ModelId.MODEL_A: "Buy",
                 ModelId.MODEL_B: "Strong Buy",
                 ModelId.MODEL_D: "Hold",
+                ModelId.MODEL_E: "Hold",
+                ModelId.MODEL_F: "Buy",
             }
             return PredictionOutcome(
                 ticker=ticker.upper(),
@@ -277,5 +281,9 @@ def test_get_prediction_compare_returns_mixed_model_results() -> None:
         assert body["comparison"]["model_c"]["ok"] is False
         assert "missing" in body["comparison"]["model_c"]["error"].lower()
         assert body["comparison"]["model_d"]["signal"] == "Hold"
+        assert body["comparison"]["model_e"]["ok"] is True
+        assert body["comparison"]["model_e"]["probability"] == pytest.approx(0.52, rel=1e-6)
+        assert body["comparison"]["model_f"]["ok"] is True
+        assert body["comparison"]["model_f"]["signal"] == "Buy"
     finally:
         app.dependency_overrides.clear()

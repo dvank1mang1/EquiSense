@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api import router as api_router
 from app.core.config import settings
@@ -33,6 +34,13 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan,
 )
+
+if settings.metrics_enabled:
+    Instrumentator().instrument(app).expose(
+        app,
+        endpoint=settings.metrics_path,
+        include_in_schema=False,
+    )
 
 app.add_middleware(
     CORSMiddleware,

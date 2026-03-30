@@ -6,6 +6,8 @@ from app.models.model_a import ModelA
 from app.models.model_b import ModelB
 from app.models.model_c import ModelC
 from app.models.model_d import ModelD
+from app.models.model_e import ModelE
+from app.models.model_f import ModelF
 
 MODEL_REGISTRY: dict[ModelId, type[BaseMLModel]] = {
     ModelId.BASELINE_LR: BaselineLRModel,
@@ -13,6 +15,8 @@ MODEL_REGISTRY: dict[ModelId, type[BaseMLModel]] = {
     ModelId.MODEL_B: ModelB,
     ModelId.MODEL_C: ModelC,
     ModelId.MODEL_D: ModelD,
+    ModelId.MODEL_E: ModelE,
+    ModelId.MODEL_F: ModelF,
 }
 
 
@@ -34,5 +38,7 @@ __all__ = [
     "ModelB",
     "ModelC",
     "ModelD",
+    "ModelE",
+    "ModelF",
     "get_model_class",
 ]

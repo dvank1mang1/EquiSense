@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -104,9 +105,10 @@ class TestBaselineLRTrainPredict:
         X, y = _make_feature_df(n=200)
         m.train(X, y)
         metrics = m.evaluate(X, y)
-        for key in ("f1", "roc_auc", "precision", "recall"):
+        for key in ("f1", "roc_auc", "precision", "recall", "brier", "pr_auc"):
             assert key in metrics
-            assert 0.0 <= metrics[key] <= 1.0
+            v = metrics[key]
+            assert math.isfinite(v) and 0.0 <= v <= 1.0
 
 
 @pytest.mark.unit

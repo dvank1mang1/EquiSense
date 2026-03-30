@@ -40,6 +40,11 @@ dependencies = [
     "tenacity==8.3.0",
     "loguru==0.7.2",
     "joblib==1.4.2",
+    "prometheus-fastapi-instrumentator>=7.1.0",
+    "seaborn>=0.13.2",
+    "optuna>=4.8.0",
+    "pandas-datareader>=0.10.0",
+    "nbformat>=5.10.4",
 ]
 
 [dependency-groups]

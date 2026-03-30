@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -57,10 +58,25 @@ class Settings(BaseSettings):
     # Backend
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
+    metrics_enabled: bool = True
+    metrics_path: str = "/metrics"
 
     # ML
     model_dir: str = "data/models"
     random_seed: int = 42
+    # Time-ordered split: train [0, train_frac), val [train_frac, val_end), test [val_end, 1)
+    training_split_train_fraction: float = Field(default=0.70, ge=0.05, le=0.95)
+    training_split_val_end_fraction: float = Field(default=0.85, ge=0.10, le=0.99)
+    training_min_rows: int = Field(default=60, ge=30, le=500_000)
+    training_calibration_min_val_samples: int = Field(default=50, ge=10, le=100_000)
+
+    @model_validator(mode="after")
+    def _training_fractions_ordered(self) -> "Settings":
+        if self.training_split_train_fraction >= self.training_split_val_end_fraction:
+            raise ValueError(
+                "training_split_train_fraction must be < training_split_val_end_fraction"
+            )
+        return self
     # FinBERT sentiment (ProsusAI/finbert) — inference only, no fine-tuning
     finbert_model_name: str = "ProsusAI/finbert"
     # auto | cpu | cuda

@@ -9,9 +9,12 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 import pandas as pd
+from loguru import logger
 
 from app.contracts.features import FeatureStorePort
+from app.core.config import get_settings
 from app.domain.identifiers import ModelId
+from app.ml.training_pipeline import calibrate_production_model, fit_production_pipeline
 from app.models import get_model_class
 from app.services.lifecycle_store import LifecycleStore, ModelLifecycleState
 
@@ -162,8 +165,8 @@ class TrainingService:
     Current pipeline:
     - build combined features for ticker
     - construct binary target (next-day returns > 0)
-    - chronological train/test split
-    - fit model, evaluate on holdout, persist artifact
+    - chronological train / validation / test (70/15/15)
+    - fit on train (median imputer + class balance), isotonic calibration on val, evaluate on test
     """
 
     def __init__(
@@ -180,10 +183,21 @@ class TrainingService:
 
     async def start_training(self, model_id: ModelId, ticker: str) -> TrainingRun:
         sym = ticker.strip().upper()
+        settings = get_settings()
         run = self._registry.create_run(
             model_id.value,
             sym,
-            params={"target": "next_day_return_gt_0", "split": "time_80_20"},
+            params={
+                "target": "next_day_return_gt_0",
+                "split": "time_series",
+                "train_fraction": settings.training_split_train_fraction,
+                "val_end_fraction": settings.training_split_val_end_fraction,
+                "min_rows": settings.training_min_rows,
+                "imputation": "median_train",
+                "class_balance": "scale_pos_weight_or_balanced",
+                "calibration": "isotonic_prefit_on_val",
+                "calibration_min_val_samples": settings.training_calibration_min_val_samples,
+            },
         )
         await self._experiment_store.upsert(run)
 
@@ -197,28 +211,77 @@ class TrainingService:
                 model_cls = get_model_class(model_id)
                 instance = model_cls()
 
-                train_df, test_df = _prepare_training_frames(combined, instance.feature_set)
-                if train_df.empty or test_df.empty:
-                    raise ValueError("not enough rows for train/test split")
+                train_df, val_df, test_df = _prepare_training_frames(
+                    combined,
+                    instance.feature_set,
+                    train_fraction=settings.training_split_train_fraction,
+                    val_end_fraction=settings.training_split_val_end_fraction,
+                    min_rows=settings.training_min_rows,
+                )
+                if train_df.empty or val_df.empty or test_df.empty:
+                    raise ValueError("not enough rows for train/validation/test split")
 
-                x_train = train_df[instance.feature_set].fillna(0.0)
+                x_train = train_df[instance.feature_set]
                 y_train = train_df["target"]
-                x_test = test_df[instance.feature_set].fillna(0.0)
+                x_val = val_df[instance.feature_set]
+                y_val = val_df["target"]
+                x_test = test_df[instance.feature_set]
                 y_test = test_df["target"]
 
-                await asyncio.to_thread(instance.train, x_train, y_train)
+                await asyncio.to_thread(fit_production_pipeline, instance, x_train, y_train)
+                calibration_status = await asyncio.to_thread(
+                    calibrate_production_model,
+                    instance,
+                    x_val,
+                    y_val,
+                    min_samples=settings.training_calibration_min_val_samples,
+                )
                 metrics = await asyncio.to_thread(instance.evaluate, x_test, y_test)
                 artifact_path = str(_artifact_path_for_run(model_id.value, run.run_id))
                 await asyncio.to_thread(instance.save, artifact_path)
                 metrics = {
                     "f1": float(metrics["f1"]),
                     "roc_auc": float(metrics["roc_auc"]),
+                    "pr_auc": float(metrics["pr_auc"]),
+                    "brier": float(metrics["brier"]),
                     "precision": float(metrics["precision"]),
                     "recall": float(metrics["recall"]),
                     "train_rows": int(len(train_df)),
+                    "val_rows": int(len(val_df)),
                     "test_rows": int(len(test_df)),
+                    "calibration": calibration_status,
+                    "calibration_isotonic": calibration_status == "isotonic_applied",
                 }
-            except Exception as e:  # noqa: BLE001
+                if "date" in train_df.columns and not train_df.empty and not val_df.empty:
+                    metrics["train_date_max"] = str(
+                        pd.to_datetime(train_df["date"], errors="coerce").max().date()
+                    )
+                    metrics["val_date_min"] = str(
+                        pd.to_datetime(val_df["date"], errors="coerce").min().date()
+                    )
+                    metrics["val_date_max"] = str(
+                        pd.to_datetime(val_df["date"], errors="coerce").max().date()
+                    )
+                if "date" in test_df.columns and not test_df.empty:
+                    metrics["test_date_min"] = str(
+                        pd.to_datetime(test_df["date"], errors="coerce").min().date()
+                    )
+                logger.info(
+                    "training completed run_id={} model={} ticker={} calibration={} roc_auc={:.4f}",
+                    run.run_id,
+                    model_id.value,
+                    sym,
+                    metrics.get("calibration"),
+                    float(metrics["roc_auc"]),
+                )
+            except Exception as e:
+                logger.exception(
+                    "training failed run_id={} model={} ticker={}: {}",
+                    run.run_id,
+                    model_id.value,
+                    sym,
+                    e,
+                )
                 self._registry.update(run.run_id, status="failed", error=str(e))
                 failed = self._registry.get(run.run_id)
                 if failed is not None:
@@ -282,12 +345,27 @@ class TrainingService:
 
 
 def _prepare_training_frames(
-    df: pd.DataFrame, feature_set: list[str]
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    df: pd.DataFrame,
+    feature_set: list[str],
+    *,
+    train_fraction: float = 0.70,
+    val_end_fraction: float = 0.85,
+    min_rows: int = 60,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Build supervised frame for one ticker: features at day t, target = 1 iff next day's
+    `returns` (close-to-close pct_change on day t+1) is strictly positive.
+
+    `returns` in technical features is `close.pct_change()` — the return **realized on** that
+    calendar row; the label uses `returns.shift(-1)` so it never uses the same row's return
+    as the thing being predicted (predict direction of *tomorrow's* move).
+    """
     if "returns" not in df.columns:
         raise ValueError("combined frame must include 'returns' for target construction")
     if "date" in df.columns:
-        work = df.sort_values("date").copy()
+        work = df.sort_values("date").reset_index(drop=True).copy()
+        if work["date"].duplicated().any():
+            work = work.drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
     else:
         work = df.copy()
 
@@ -295,20 +373,44 @@ def _prepare_training_frames(
     if missing:
         raise ValueError(f"combined frame missing model features: {','.join(missing[:8])}")
 
-    # target = 1 if next-day return positive, else 0
-    work["target"] = (pd.to_numeric(work["returns"], errors="coerce").shift(-1) > 0.0).astype(
-        "int64"
-    )
-    work = work.dropna(subset=feature_set)
-    work = work.iloc[:-1].copy()  # drop last row with unknown next-day target
-    if len(work) < 30:
-        raise ValueError("need at least 30 rows for stable train/test split")
+    ret = pd.to_numeric(work["returns"], errors="coerce")
+    work["_next_return"] = ret.shift(-1)
+    work = work.dropna(subset=["_next_return"])
+    work["target"] = (work["_next_return"] > 0.0).astype("int64")
+    work = work.drop(columns=["_next_return"])
 
-    split_idx = int(len(work) * 0.8)
-    split_idx = max(10, min(split_idx, len(work) - 5))
-    train_df = work.iloc[:split_idx].copy()
-    test_df = work.iloc[split_idx:].copy()
-    return train_df, test_df
+    work = work.dropna(subset=feature_set)
+    if len(work) < min_rows:
+        raise ValueError(
+            f"need at least {min_rows} rows with valid features and next-day return for train/val/test"
+        )
+
+    if not (0.0 < train_fraction < val_end_fraction < 1.0):
+        raise ValueError("train_fraction and val_end_fraction must satisfy 0 < train < val_end < 1")
+
+    n = len(work)
+    i_val = int(train_fraction * n)
+    i_test = int(val_end_fraction * n)
+    i_val = max(10, min(i_val, n - 20))
+    i_test = max(i_val + 5, min(i_test, n - 5))
+
+    train_df = work.iloc[:i_val].copy()
+    val_df = work.iloc[i_val:i_test].copy()
+    test_df = work.iloc[i_test:].copy()
+
+    if "date" in train_df.columns and not train_df.empty and not val_df.empty and not test_df.empty:
+        tr_end = pd.to_datetime(train_df["date"], errors="coerce").max()
+        va_min = pd.to_datetime(val_df["date"], errors="coerce").min()
+        va_max = pd.to_datetime(val_df["date"], errors="coerce").max()
+        te_min = pd.to_datetime(test_df["date"], errors="coerce").min()
+        if pd.isna(tr_end) or pd.isna(va_min) or pd.isna(va_max) or pd.isna(te_min):
+            raise ValueError("chronological split: invalid dates")
+        if tr_end >= va_min or va_max >= te_min:
+            raise ValueError(
+                "chronological split invariant failed: train < validation < test on timeline"
+            )
+
+    return train_df, val_df, test_df
 
 
 def _build_dataset_fingerprint(df: pd.DataFrame) -> str:

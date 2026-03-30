@@ -1,0 +1,2 @@
+sharpe_bh,sharpe_strategy_net,max_dd_net,meta_sharpe_strategy_net,meta_max_dd_net,dm_stat,dm_p_value_two_sided,dm_mean_d,dm_var_mean_d,dm_meta_stat,dm_meta_p_value_two_sided,spa_p_value_one_sided,spa_observed_mean,threshold
+2.020265081205776,1.4493243158643259,-0.038708519556107435,31.827175167463682,0.0,0.228246078270234,0.8194549414085985,0.0001443761132986912,4.0011427291595293e-07,2.4554626555624703,0.014070337119349133,0.504,-0.00018627359680978178,0.45

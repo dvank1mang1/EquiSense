@@ -9,7 +9,7 @@ from app.backtesting.engine import BacktestEngine
 from app.contracts.data_providers import MarketDataProvider
 from app.contracts.features import FeatureStorePort
 from app.domain.exceptions import BacktestDependencyError, BacktestInputError
-from app.domain.identifiers import ModelId
+from app.domain.identifiers import ROLLOUT_MODEL_IDS, ModelId
 from app.models import get_model_class
 from app.schemas.backtest import BacktestMetrics, BacktestResponse, EquityPoint
 
@@ -117,7 +117,7 @@ class BacktestingService:
         initial_capital: float,
     ) -> dict[str, BacktestCompareRow]:
         rows: dict[str, BacktestCompareRow] = {}
-        for mid in (ModelId.MODEL_A, ModelId.MODEL_B, ModelId.MODEL_C, ModelId.MODEL_D):
+        for mid in ROLLOUT_MODEL_IDS:
             try:
                 res = await self.run_single(
                     ticker=ticker,

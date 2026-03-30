@@ -50,6 +50,9 @@ docker-compose up --build
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000
 - API Docs: http://localhost:8000/docs
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3001 (default: admin/admin)
+- Grafana dashboard (auto-provisioned): `EquiSense / EquiSense API Overview`
 
 ### 3. Локальная разработка (без Docker)
 
@@ -72,6 +75,8 @@ uv run pytest tests -q
 ```
 
 Без dev-зависимостей: `uv sync`. Lockfile: `backend/uv.lock` (коммитить в git).
+
+Метрики backend (Prometheus format): `GET /metrics` (настраивается через `METRICS_PATH`).
 
 С **docker-compose** backend использует отдельный volume `backend_venv:/app/.venv`, поэтому локальный `backend/.venv` не ломает контейнерный runtime.
 

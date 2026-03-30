@@ -39,7 +39,7 @@ class TestLagFeatures:
             assert col in out.columns, f"missing lag column: {col}"
 
     def test_lag_columns_count(self, sample_ohlcv_df: pd.DataFrame) -> None:
-        out = TechnicalFeatureEngineer().compute(sample_ohlcv_df)
+        TechnicalFeatureEngineer().compute(sample_ohlcv_df)
         assert len(LAG_FEATURES) == 8
 
     def test_returns_lag1_equals_shifted_returns(self, sample_ohlcv_df: pd.DataFrame) -> None:

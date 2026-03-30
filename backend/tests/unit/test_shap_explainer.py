@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.explainability.shap_explainer import ShapExplainer, _FEATURE_GROUPS
+from app.explainability.shap_explainer import _FEATURE_GROUPS, ShapExplainer
 from app.features.constants import TECHNICAL_FEATURES
 from app.models.baseline_lr import BaselineLRModel
 from app.models.model_a import ModelA
