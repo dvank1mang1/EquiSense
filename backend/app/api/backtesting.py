@@ -93,7 +93,9 @@ async def run_backtest(
         )
         return resp
     except BacktestDependencyError as e:
-        logger.warning("backtesting.run dependency_error ticker={} model={} err={}", sym, model.value, e)
+        logger.warning(
+            "backtesting.run dependency_error ticker={} model={} err={}", sym, model.value, e
+        )
         raise HTTPException(status_code=404, detail=str(e)) from e
     except BacktestInputError as e:
         logger.warning("backtesting.run input_error ticker={} model={} err={}", sym, model.value, e)

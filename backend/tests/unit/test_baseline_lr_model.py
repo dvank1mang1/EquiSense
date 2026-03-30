@@ -15,7 +15,9 @@ from app.models import MODEL_REGISTRY, get_model_class
 from app.models.baseline_lr import BaselineLRModel
 
 
-def _make_feature_df(n: int = 120, rng: np.random.Generator | None = None) -> tuple[pd.DataFrame, pd.Series]:
+def _make_feature_df(
+    n: int = 120, rng: np.random.Generator | None = None
+) -> tuple[pd.DataFrame, pd.Series]:
     if rng is None:
         rng = np.random.default_rng(0)
     X = pd.DataFrame({feat: rng.standard_normal(n) for feat in TECHNICAL_FEATURES})

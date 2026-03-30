@@ -64,7 +64,9 @@ def test_get_technical_indicators_returns_values(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.integration
-def test_get_history_prefers_cached_ohlcv_before_upstream_call(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_history_prefers_cached_ohlcv_before_upstream_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.api import stocks as stocks_api
     from main import app
 

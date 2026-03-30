@@ -77,6 +77,7 @@ class Settings(BaseSettings):
                 "training_split_train_fraction must be < training_split_val_end_fraction"
             )
         return self
+
     # FinBERT sentiment (ProsusAI/finbert) — inference only, no fine-tuning
     finbert_model_name: str = "ProsusAI/finbert"
     # auto | cpu | cuda

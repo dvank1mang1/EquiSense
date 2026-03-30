@@ -56,7 +56,9 @@ def _apply_balance_recursive(est: object, y: pd.Series) -> None:
     _apply_balance_to_leaf(est, y)
 
 
-def fit_production_pipeline(instance: BaseMLModel, x_train: pd.DataFrame, y_train: pd.Series) -> None:
+def fit_production_pipeline(
+    instance: BaseMLModel, x_train: pd.DataFrame, y_train: pd.Series
+) -> None:
     """
     Wrap the estimator in Pipeline(imputer, model) with median imputation on train,
     and set imbalance-aware hyperparameters on tree/boosting estimators before fit.

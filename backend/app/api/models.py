@@ -24,7 +24,12 @@ async def list_models():
                 "description": "Linear baseline — same technical features as Model A. "
                 "Use to quantify the non-linear gain of tree-based ensembles.",
             },
-            {"id": "model_a", "name": "Technical Only", "features": ["technical"], "algorithm": "XGBoost"},
+            {
+                "id": "model_a",
+                "name": "Technical Only",
+                "features": ["technical"],
+                "algorithm": "XGBoost",
+            },
             {
                 "id": "model_b",
                 "name": "Technical + Fundamental",
@@ -146,7 +151,12 @@ async def train_model(
         ticker=run.ticker,
         status=run.status,
     )
-    logger.info("models.train queued model_id={} ticker={} run_id={}", resp.model_id, resp.ticker, resp.run_id)
+    logger.info(
+        "models.train queued model_id={} ticker={} run_id={}",
+        resp.model_id,
+        resp.ticker,
+        resp.run_id,
+    )
     return resp
 
 

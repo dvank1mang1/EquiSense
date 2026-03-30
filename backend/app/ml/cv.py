@@ -175,9 +175,7 @@ def combinatorial_purged_cv_splits(
     if test_n_groups < 1 or test_n_groups >= n_groups:
         raise ValueError("test_n_groups must be in [1, n_groups-1]")
     ranges = _block_index_ranges(n, n_groups)
-    combs: Sequence[tuple[int, ...]] = list(
-        itertools.combinations(range(n_groups), test_n_groups)
-    )
+    combs: Sequence[tuple[int, ...]] = list(itertools.combinations(range(n_groups), test_n_groups))
     if len(combs) > max_splits:
         rng = np.random.default_rng(seed)
         idx = rng.choice(len(combs), size=max_splits, replace=False)

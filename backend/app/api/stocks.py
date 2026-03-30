@@ -282,7 +282,9 @@ async def get_technical_indicators(
             _raise_http_from_data_error(e)
 
     if df is None or df.empty:
-        raise HTTPException(status_code=503, detail="No OHLCV data available for indicator calculation.")
+        raise HTTPException(
+            status_code=503, detail="No OHLCV data available for indicator calculation."
+        )
 
     engineer = TechnicalFeatureEngineer()
     feats = await asyncio.to_thread(engineer.compute, df)

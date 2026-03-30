@@ -48,5 +48,3 @@ def oof_primary_proba(
         te_idx = df.loc[m_te].index
         out.loc[te_idx] = proba
     return out
-
-

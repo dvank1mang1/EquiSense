@@ -38,18 +38,21 @@ def _extract_inner_model(model: object) -> object:
 def _is_tree_model(inner: object) -> bool:
     try:
         from xgboost import XGBClassifier
+
         if isinstance(inner, XGBClassifier):
             return True
     except (ImportError, OSError):
         pass
     try:
         from lightgbm import LGBMClassifier
+
         if isinstance(inner, LGBMClassifier):
             return True
     except (ImportError, OSError):
         pass
     try:
         from sklearn.ensemble import RandomForestClassifier
+
         if isinstance(inner, RandomForestClassifier):
             return True
     except (ImportError, OSError):
@@ -67,6 +70,7 @@ def _is_tree_model(inner: object) -> bool:
 def _is_linear_model(inner: object) -> bool:
     try:
         from sklearn.linear_model import LogisticRegression
+
         return isinstance(inner, LogisticRegression)
     except ImportError:
         return False
@@ -93,7 +97,11 @@ class ShapExplainer:
                 xi = imp.transform(feat_df)
                 rest = model.named_steps.get("clf") or model.named_steps["prep"]
                 inner = _extract_inner_model(rest)
-                if _is_linear_model(inner) and isinstance(rest, Pipeline) and "scaler" in rest.named_steps:
+                if (
+                    _is_linear_model(inner)
+                    and isinstance(rest, Pipeline)
+                    and "scaler" in rest.named_steps
+                ):
                     return rest.named_steps["scaler"].transform(xi)
                 return xi
             if isinstance(model, Pipeline) and _is_linear_model(_extract_inner_model(model)):
@@ -165,8 +173,7 @@ class ShapExplainer:
     def get_top_features(self, shap_values: dict[str, float], top_n: int = 10) -> list[dict]:
         sorted_features = sorted(shap_values.items(), key=lambda x: abs(x[1]), reverse=True)
         return [
-            {"name": name, "shap_value": round(val, 6)}
-            for name, val in sorted_features[:top_n]
+            {"name": name, "shap_value": round(val, 6)} for name, val in sorted_features[:top_n]
         ]
 
     def base_value(self) -> float:

@@ -10,7 +10,9 @@ from app.models.baseline_lr import BaselineLRModel
 from app.models.model_a import ModelA
 
 
-def _make_df(n: int = 150, rng: np.random.Generator | None = None) -> tuple[pd.DataFrame, pd.Series]:
+def _make_df(
+    n: int = 150, rng: np.random.Generator | None = None
+) -> tuple[pd.DataFrame, pd.Series]:
     if rng is None:
         rng = np.random.default_rng(42)
     X = pd.DataFrame({feat: rng.standard_normal(n) for feat in TECHNICAL_FEATURES})
