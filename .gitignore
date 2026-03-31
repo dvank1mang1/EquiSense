@@ -44,7 +44,6 @@ mlruns/
 
 # Jupyter
 .ipynb_checkpoints/
-*.ipynb
 .ipython/
 .jupyter_runtime/
 
