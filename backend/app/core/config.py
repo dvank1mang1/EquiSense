@@ -14,6 +14,8 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "EquiSense API"
+    # Semver-ish release (overridable in deploy: APP_VERSION=1.2.3)
+    app_version: str = "0.1.0"
     debug: bool = False
     secret_key: str = "change_this_in_production"
 
@@ -54,6 +56,10 @@ class Settings(BaseSettings):
     ohlcv_parquet_cache_max_age_sec: int = 86400
     fundamentals_json_cache_max_age_sec: int = 604800
     quote_json_cache_max_age_sec: int = 120
+    backtest_allow_network_fallback: bool = False
+    auto_promotion_min_roc_auc_delta: float = 0.005
+    auto_promotion_max_brier_increase: float = 0.01
+    auto_promotion_min_f1_delta: float = -0.02
 
     # Backend
     backend_host: str = "0.0.0.0"

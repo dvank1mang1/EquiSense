@@ -20,10 +20,15 @@ from app.core.config import settings
 from app.data.fundamental_data import FundamentalDataClient
 from app.data.market_data import MarketDataClient
 from app.data.news_data import NewsDataClient
+from app.domain.exceptions import BacktestDependencyError, BacktestInputError
 from app.etl.pipeline import RawToProcessedETL
+from app.features.feature_store import FeatureStore
+from app.jobs.backtest_store import BacktestStore
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
 from app.jobs.queue import PostgresJobQueue
 from app.jobs.store import FileJobStore, PostgresJobStore, ResilientJobStore
+from app.schemas.backtest import BacktestJobPayload
+from app.services.backtesting_service import BacktestingService
 
 
 def _job_store():
@@ -38,8 +43,12 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
     if item is None:
         return False
     payload = item.payload
+    job_type = str(payload.get("type", "refresh_universe"))
+
+    # Shared adapters
+    market_client = MarketDataClient(http=http)
     orchestrator = BatchRefreshOrchestrator(
-        market=MarketDataClient(http=http),
+        market=market_client,
         fundamentals=FundamentalDataClient(http=http),
         etl_runner=RawToProcessedETL(),
         job_store=_job_store(),
@@ -47,6 +56,11 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
         retry_attempts=int(payload.get("retry_attempts", 3)),
         retry_wait_sec=float(payload.get("retry_wait_sec", 2.0)),
     )
+    backtesting_service = BacktestingService(
+        market=market_client,
+        features=FeatureStore(),
+    )
+    backtest_store = BacktestStore()
     stop_heartbeat = asyncio.Event()
 
     async def _heartbeat_loop() -> None:
@@ -56,16 +70,31 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
 
     hb_task = asyncio.create_task(_heartbeat_loop())
     try:
-        await orchestrator.run(
-            tickers=[str(t).strip().upper() for t in payload.get("tickers", [])],
-            run_id=item.run_id,
-            force_full=bool(payload.get("force_full", False)),
-            refresh_quote=bool(payload.get("refresh_quote", True)),
-            refresh_fundamentals=bool(payload.get("refresh_fundamentals", True)),
-            run_etl=bool(payload.get("run_etl", False)),
-            refresh_news=bool(payload.get("refresh_news", False)),
-        )
-        await asyncio.to_thread(queue.mark_completed, item.run_id)
+        if job_type == "backtest_single":
+            bt = BacktestJobPayload.model_validate(payload)
+            try:
+                resp = await backtesting_service.run_single(
+                    ticker=bt.ticker,
+                    model=bt.model,
+                    start_date=bt.start_date,
+                    end_date=bt.end_date,
+                    initial_capital=bt.initial_capital,
+                )
+                await asyncio.to_thread(backtest_store.save, item.run_id, resp)
+                await asyncio.to_thread(queue.mark_completed, item.run_id)
+            except (BacktestDependencyError, BacktestInputError) as e:
+                await asyncio.to_thread(queue.mark_failed, item.run_id, str(e))
+        else:
+            await orchestrator.run(
+                tickers=[str(t).strip().upper() for t in payload.get("tickers", [])],
+                run_id=item.run_id,
+                force_full=bool(payload.get("force_full", False)),
+                refresh_quote=bool(payload.get("refresh_quote", True)),
+                refresh_fundamentals=bool(payload.get("refresh_fundamentals", True)),
+                run_etl=bool(payload.get("run_etl", False)),
+                refresh_news=bool(payload.get("refresh_news", False)),
+            )
+            await asyncio.to_thread(queue.mark_completed, item.run_id)
     except asyncio.CancelledError:
         await asyncio.to_thread(
             queue.requeue_run,

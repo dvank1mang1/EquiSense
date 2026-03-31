@@ -1,13 +1,9 @@
+import ApiErrorNotice from "@/components/ApiErrorNotice";
 import { usePrediction } from "@/hooks/usePrediction";
+import { MODEL_LABELS, PREDICTION_MODEL_IDS } from "@/lib/models";
 import clsx from "clsx";
 
-const MODELS = [
-  { id: "baseline_lr", label: "LR: Baseline" },
-  { id: "model_a", label: "A: Tech" },
-  { id: "model_b", label: "B: Tech+Fund" },
-  { id: "model_c", label: "C: Tech+News" },
-  { id: "model_d", label: "D: All" },
-];
+const MODELS = PREDICTION_MODEL_IDS.map((id) => ({ id, label: MODEL_LABELS[id] ?? id }));
 
 const SIGNAL_STYLES: Record<string, string> = {
   "Strong Buy": "badge-buy border border-success/40",
@@ -23,11 +19,13 @@ interface PredictionCardProps {
 }
 
 export default function PredictionCard({ ticker, model, onModelChange }: PredictionCardProps) {
-  const { data, isLoading } = usePrediction(ticker, model);
+  const { data, error, isLoading } = usePrediction(ticker, model);
 
   return (
     <div className="card h-full flex flex-col gap-4">
       <h3>Прогноз</h3>
+
+      {error ? <ApiErrorNotice error={error} title="Прогноз недоступен" /> : null}
 
       {/* Model selector */}
       <div className="flex flex-wrap gap-1">

@@ -211,6 +211,31 @@ class PostgresJobQueue:
             conn.commit()
         return int(updated)
 
+    def get_job(self, run_id: str) -> dict[str, Any] | None:
+        """Return raw job row for introspection (status, error, payload, timestamps)."""
+        self._ensure_schema()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT run_id, status, payload_json, error, created_at, updated_at
+                    FROM job_queue
+                    WHERE run_id = %s
+                    """,
+                    (run_id,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "run_id": str(row[0]),
+            "status": str(row[1]),
+            "payload": json.loads(str(row[2])) if row[2] is not None else None,
+            "error": str(row[3]) if row[3] is not None else None,
+            "created_at": str(row[4]) if row[4] is not None else None,
+            "updated_at": str(row[5]) if row[5] is not None else None,
+        }
+
     def snapshot(self, *, stale_after_sec: int) -> dict[str, int]:
         self._ensure_schema()
         with self._connect() as conn:
@@ -360,6 +385,18 @@ def safe_queue_snapshot(*, stale_after_sec: int) -> dict[str, int] | None:
         return None
     except Exception as e:  # noqa: BLE001
         logger.warning("Job queue snapshot failed: {}", e)
+        return None
+
+
+def safe_get_job(run_id: str) -> dict[str, Any] | None:
+    """Safe wrapper around PostgresJobQueue.get_job for API usage."""
+    try:
+        queue = get_job_queue()
+        if hasattr(queue, "get_job"):
+            return queue.get_job(run_id)  # type: ignore[no-any-return]
+        return None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Job queue get_job failed: {}", e)
         return None
 
 

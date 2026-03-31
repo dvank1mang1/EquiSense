@@ -34,6 +34,15 @@ class TrainingRun:
     error: str | None = None
 
 
+@dataclass
+class PromotionDecision:
+    accepted: bool
+    reason: str
+    candidate_run_id: str
+    champion_before_run_id: str | None = None
+    checks: dict[str, Any] | None = None
+
+
 class TrainingRegistry:
     def __init__(self) -> None:
         self._runs: dict[str, TrainingRun] = {}
@@ -326,8 +335,8 @@ class TrainingService:
         )
 
     async def promote_champion(
-        self, model_id: str, run_id: str, *, reason: str
-    ) -> ModelLifecycleState:
+        self, model_id: str, run_id: str, *, reason: str, force: bool = False
+    ) -> tuple[ModelLifecycleState, PromotionDecision]:
         run = await self.get_status(run_id)
         if run is None:
             raise ValueError(f"unknown run id: {run_id}")
@@ -335,13 +344,153 @@ class TrainingService:
             raise ValueError(f"run {run_id} does not belong to model {model_id}")
         if run.status != "completed":
             raise ValueError("only completed runs can be promoted")
-        return await self._lifecycle.promote(model_id, run_id, reason=reason)
+        decision = await self.evaluate_promotion(model_id, run_id)
+        if force and not decision.accepted:
+            decision = PromotionDecision(
+                accepted=True,
+                reason=f"forced promotion: {reason}",
+                candidate_run_id=run_id,
+                champion_before_run_id=decision.champion_before_run_id,
+                checks={**(decision.checks or {}), "forced": True},
+            )
+        if decision.accepted:
+            state = await self._lifecycle.promote(model_id, run_id, reason=reason)
+        else:
+            state = await self._lifecycle.state(model_id)
+        await self._persist_promotion_decision(run_id, decision)
+        return state, decision
 
     async def get_lifecycle(self, model_id: str) -> ModelLifecycleState:
         return await self._lifecycle.state(model_id)
 
     async def list_lifecycles(self) -> list[ModelLifecycleState]:
         return await self._lifecycle.list_states()
+
+    async def evaluate_promotion(self, model_id: str, run_id: str) -> PromotionDecision:
+        settings = get_settings()
+        candidate = await self.get_status(run_id)
+        if candidate is None or candidate.metrics is None:
+            return PromotionDecision(
+                accepted=False,
+                reason="candidate run has no metrics",
+                candidate_run_id=run_id,
+                checks={},
+            )
+        current = await self._lifecycle.state(model_id)
+        champion_run_id = current.champion_run_id
+        if champion_run_id is None:
+            return PromotionDecision(
+                accepted=True,
+                reason="no current champion; accept first completed run",
+                candidate_run_id=run_id,
+                champion_before_run_id=None,
+                checks={"bootstrap": True},
+            )
+        champion = await self.get_status(champion_run_id)
+        if champion is None or champion.metrics is None:
+            return PromotionDecision(
+                accepted=True,
+                reason="current champion metrics unavailable; accept candidate",
+                candidate_run_id=run_id,
+                champion_before_run_id=champion_run_id,
+                checks={"champion_metrics_missing": True},
+            )
+        c_roc = _metric(candidate.metrics, "roc_auc")
+        p_roc = _metric(champion.metrics, "roc_auc")
+        c_f1 = _metric(candidate.metrics, "f1")
+        p_f1 = _metric(champion.metrics, "f1")
+        c_brier = _metric(candidate.metrics, "brier")
+        p_brier = _metric(champion.metrics, "brier")
+        if c_roc is None or p_roc is None:
+            return PromotionDecision(
+                accepted=False,
+                reason="missing roc_auc metric for policy comparison",
+                candidate_run_id=run_id,
+                champion_before_run_id=champion_run_id,
+                checks={},
+            )
+        checks = {
+            "candidate_roc_auc": c_roc,
+            "champion_roc_auc": p_roc,
+            "roc_auc_delta": c_roc - p_roc,
+            "required_roc_auc_delta": settings.auto_promotion_min_roc_auc_delta,
+            "candidate_f1": c_f1,
+            "champion_f1": p_f1,
+            "f1_delta": (c_f1 - p_f1) if c_f1 is not None and p_f1 is not None else None,
+            "min_f1_delta": settings.auto_promotion_min_f1_delta,
+            "candidate_brier": c_brier,
+            "champion_brier": p_brier,
+            "brier_increase": (c_brier - p_brier) if c_brier is not None and p_brier is not None else None,
+            "max_brier_increase": settings.auto_promotion_max_brier_increase,
+        }
+        if (c_roc - p_roc) < settings.auto_promotion_min_roc_auc_delta:
+            return PromotionDecision(
+                accepted=False,
+                reason="roc_auc improvement below threshold",
+                candidate_run_id=run_id,
+                champion_before_run_id=champion_run_id,
+                checks=checks,
+            )
+        if c_f1 is not None and p_f1 is not None:
+            if (c_f1 - p_f1) < settings.auto_promotion_min_f1_delta:
+                return PromotionDecision(
+                    accepted=False,
+                    reason="f1 regression exceeds allowed guardrail",
+                    candidate_run_id=run_id,
+                    champion_before_run_id=champion_run_id,
+                    checks=checks,
+                )
+        if c_brier is not None and p_brier is not None:
+            if (c_brier - p_brier) > settings.auto_promotion_max_brier_increase:
+                return PromotionDecision(
+                    accepted=False,
+                    reason="brier increase exceeds allowed guardrail",
+                    candidate_run_id=run_id,
+                    champion_before_run_id=champion_run_id,
+                    checks=checks,
+                )
+        return PromotionDecision(
+            accepted=True,
+            reason="candidate passes promotion policy",
+            candidate_run_id=run_id,
+            champion_before_run_id=champion_run_id,
+            checks=checks,
+        )
+
+    async def _persist_promotion_decision(self, run_id: str, decision: PromotionDecision) -> None:
+        run = await self.get_status(run_id)
+        if run is None:
+            return
+        metrics = dict(run.metrics or {})
+        metrics["promotion_decision"] = {
+            "accepted": decision.accepted,
+            "reason": decision.reason,
+            "candidate_run_id": decision.candidate_run_id,
+            "champion_before_run_id": decision.champion_before_run_id,
+            "checks": decision.checks or {},
+        }
+        run.metrics = metrics
+        run.updated_at = datetime.now(tz=UTC).isoformat()
+        # Keep in-memory registry in sync when run exists there.
+        self._registry.update(
+            run_id,
+            status=run.status,
+            dataset_fingerprint=run.dataset_fingerprint,
+            artifact_path=run.artifact_path,
+            metrics=run.metrics,
+            error=run.error,
+        )
+        await self._experiment_store.upsert(run)
+
+
+def _metric(metrics: dict[str, Any], name: str) -> float | None:
+    raw = metrics.get(name)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def _prepare_training_frames(

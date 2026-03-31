@@ -1,0 +1,126 @@
+name: nightly-refresh-universe
+
+on:
+  schedule:
+    # 01:30 UTC daily
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Comma-separated tickers override (e.g. AAPL,MSFT,NVDA)"
+        required: false
+        default: ""
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      API_BASE_URL: ${{ secrets.NIGHTLY_REFRESH_API_BASE_URL }}
+      API_BEARER_TOKEN: ${{ secrets.NIGHTLY_REFRESH_BEARER_TOKEN }}
+      NIGHTLY_TICKERS_DEFAULT: ${{ vars.NIGHTLY_TICKERS }}
+      DISPATCH_TICKERS: ${{ github.event.inputs.tickers || '' }}
+
+    steps:
+      - name: Validate configuration
+        run: |
+          test -n "$API_BASE_URL" || (echo "Missing secret NIGHTLY_REFRESH_API_BASE_URL" && exit 1)
+
+      - name: Enqueue refresh-universe job
+        id: enqueue
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          api_base = os.environ["API_BASE_URL"].rstrip("/")
+          bearer = os.environ.get("API_BEARER_TOKEN", "").strip()
+          tickers_raw = (os.environ.get("DISPATCH_TICKERS") or os.environ.get("NIGHTLY_TICKERS_DEFAULT") or "").strip()
+          tickers = [t.strip().upper() for t in tickers_raw.split(",") if t.strip()]
+          if not tickers:
+              tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
+
+          payload = {
+              "tickers": tickers,
+              "background": True,
+              "force_full": False,
+              "refresh_quote": True,
+              "refresh_fundamentals": True,
+              "run_etl": True,
+              "refresh_news": True,
+              "retry_attempts": 3,
+              "retry_wait_sec": 2.0,
+          }
+
+          url = f"{api_base}/api/v1/jobs/refresh-universe"
+          req = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          if bearer:
+              req.add_header("Authorization", f"Bearer {bearer}")
+
+          with urllib.request.urlopen(req, timeout=60) as resp:
+              body = json.loads(resp.read().decode("utf-8"))
+
+          run_id = str(body.get("run_id", "")).strip()
+          if not run_id:
+              raise SystemExit(f"Unexpected response without run_id: {body}")
+
+          print(f"Run queued: run_id={run_id} tickers={','.join(tickers)}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"run_id={run_id}\n")
+          PY
+
+      - name: Poll refresh status until completion
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          api_base = os.environ["API_BASE_URL"].rstrip("/")
+          bearer = os.environ.get("API_BEARER_TOKEN", "").strip()
+          run_id = os.environ["RUN_ID"]
+          url = f"{api_base}/api/v1/jobs/refresh-universe/{run_id}"
+
+          deadline = time.time() + 2 * 60 * 60  # 2h
+          sleep_sec = 15
+          last_status = "unknown"
+
+          while time.time() < deadline:
+              req = urllib.request.Request(url, method="GET")
+              if bearer:
+                  req.add_header("Authorization", f"Bearer {bearer}")
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      payload = json.loads(resp.read().decode("utf-8"))
+              except urllib.error.HTTPError as e:
+                  # status file may not exist immediately after enqueue
+                  if e.code == 404:
+                      print("status=not_found_yet")
+                      time.sleep(sleep_sec)
+                      continue
+                  raise
+
+              runtime_status = str(payload.get("runtime_status") or payload.get("status") or "").lower()
+              last_status = runtime_status or "unknown"
+              print(f"runtime_status={last_status}")
+              if runtime_status in {"completed", "done", "success"}:
+                  print("Nightly refresh completed")
+                  raise SystemExit(0)
+              if runtime_status in {"failed", "error"}:
+                  print(json.dumps(payload, ensure_ascii=False))
+                  raise SystemExit("Nightly refresh failed")
+
+              time.sleep(sleep_sec)
+
+          raise SystemExit(f"Nightly refresh timed out, last_status={last_status}")
+          PY
+        env:
+          RUN_ID: ${{ steps.enqueue.outputs.run_id }}

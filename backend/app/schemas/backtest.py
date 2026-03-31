@@ -1,7 +1,9 @@
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel
 
+from app.domain.identifiers import ModelId
 
 class BacktestRequest(BaseModel):
     ticker: str
@@ -47,3 +49,20 @@ class BacktestCompareEntry(BaseModel):
 class BacktestCompareResponse(BaseModel):
     ticker: str
     comparison: dict[str, BacktestCompareEntry]
+
+
+class BacktestJobPayload(BaseModel):
+    type: Literal["backtest_single"] = "backtest_single"
+    run_id: str
+    ticker: str
+    model: ModelId
+    start_date: date | None = None
+    end_date: date | None = None
+    initial_capital: float = 10000.0
+
+
+class BacktestRunJobBody(BaseModel):
+    model: ModelId = ModelId.MODEL_D
+    start_date: date | None = None
+    end_date: date | None = None
+    initial_capital: float = 10000.0

@@ -1,5 +1,7 @@
 "use client";
+import ApiErrorNotice from "@/components/ApiErrorNotice";
 import { useModelComparison } from "@/hooks/usePrediction";
+import { MODEL_LABELS_LONG, ROLLOUT_MODEL_IDS } from "@/lib/models";
 import clsx from "clsx";
 
 interface ModelComparisonProps {
@@ -14,17 +16,17 @@ const SIGNAL_STYLES: Record<string, string> = {
 };
 
 export default function ModelComparison({ ticker }: ModelComparisonProps) {
-  const { data, isLoading } = useModelComparison(ticker);
+  const { data, error, isLoading } = useModelComparison(ticker);
 
-  const models = [
-    { id: "baseline_lr", label: "LR: Baseline (linear)" },
-    { id: "model_a", label: "A: Technical Only" },
-    { id: "model_b", label: "B: Tech + Fundamental" },
-    { id: "model_c", label: "C: Tech + News" },
-    { id: "model_d", label: "D: All Features" },
-  ];
+  const models = ROLLOUT_MODEL_IDS.map((id) => ({
+    id,
+    label: MODEL_LABELS_LONG[id] ?? id,
+  }));
 
   if (isLoading) return <div className="animate-pulse h-32 bg-surface-700 rounded-lg" />;
+  if (error) {
+    return <ApiErrorNotice error={error} title="Сравнение моделей недоступно" tone="warning" />;
+  }
 
   return (
     <div className="overflow-x-auto">

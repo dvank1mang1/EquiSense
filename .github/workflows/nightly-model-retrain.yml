@@ -1,0 +1,101 @@
+name: nightly-model-retrain
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "Ticker for training dataset (default AAPL)"
+        required: false
+        default: "AAPL"
+
+jobs:
+  retrain-and-promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      API_BASE_URL: ${{ secrets.NIGHTLY_REFRESH_API_BASE_URL }}
+      API_BEARER_TOKEN: ${{ secrets.NIGHTLY_REFRESH_BEARER_TOKEN }}
+      TRAIN_TICKER: ${{ github.event.inputs.ticker || vars.NIGHTLY_TRAIN_TICKER || 'AAPL' }}
+
+    steps:
+      - name: Validate configuration
+        run: |
+          test -n "$API_BASE_URL" || (echo "Missing secret NIGHTLY_REFRESH_API_BASE_URL" && exit 1)
+
+      - name: Train rollout models and policy-promote
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.request
+
+          api_base = os.environ["API_BASE_URL"].rstrip("/")
+          token = os.environ.get("API_BEARER_TOKEN", "").strip()
+          ticker = os.environ.get("TRAIN_TICKER", "AAPL").strip().upper()
+          model_ids = ["model_a", "model_b", "model_c", "model_d", "model_e", "model_f"]
+
+          def _request(path: str, method: str = "GET", payload: dict | None = None) -> dict:
+              data = None
+              headers = {}
+              if payload is not None:
+                  data = json.dumps(payload).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              if token:
+                  headers["Authorization"] = f"Bearer {token}"
+              req = urllib.request.Request(
+                  f"{api_base}{path}",
+                  data=data,
+                  headers=headers,
+                  method=method,
+              )
+              with urllib.request.urlopen(req, timeout=60) as resp:
+                  return json.loads(resp.read().decode("utf-8"))
+
+          results: dict[str, dict] = {}
+          for model_id in model_ids:
+              train = _request(
+                  f"/api/v1/models/{model_id}/train",
+                  method="POST",
+                  payload={"ticker": ticker},
+              )
+              run_id = train["run_id"]
+              deadline = time.time() + 60 * 30
+              status = "running"
+              details = {}
+              while time.time() < deadline:
+                  details = _request(f"/api/v1/models/{model_id}/train/{run_id}")
+                  status = str(details.get("status", "")).lower()
+                  if status in {"completed", "failed"}:
+                      break
+                  time.sleep(5)
+              if status != "completed":
+                  results[model_id] = {"run_id": run_id, "status": status, "promoted": False}
+                  continue
+
+              promoted = _request(
+                  f"/api/v1/models/{model_id}/lifecycle/promote/{run_id}",
+                  method="POST",
+                  payload={"reason": "nightly automatic promotion gate", "force": False},
+              )
+              decision = promoted.get("promotion_decision") or {}
+              results[model_id] = {
+                  "run_id": run_id,
+                  "status": status,
+                  "promoted": bool(decision.get("accepted", False)),
+                  "decision_reason": decision.get("reason"),
+              }
+
+          print(json.dumps(results, ensure_ascii=False, indent=2))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("## Nightly model retrain summary\n\n")
+              fh.write("| Model | Run | Train status | Promoted | Decision |\n")
+              fh.write("|---|---|---|---|---|\n")
+              for mid, row in results.items():
+                  fh.write(
+                      f"| {mid} | {row.get('run_id','-')} | {row.get('status','-')} | "
+                      f"{'yes' if row.get('promoted') else 'no'} | {row.get('decision_reason','-')} |\n"
+                  )
+          PY

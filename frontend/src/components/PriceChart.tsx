@@ -1,5 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
+import ApiErrorNotice from "@/components/ApiErrorNotice";
 import { usePriceHistory } from "@/hooks/useStockData";
 import { useState } from "react";
 
@@ -13,10 +14,11 @@ interface PriceChartProps {
 
 export default function PriceChart({ ticker }: PriceChartProps) {
   const [period, setPeriod] = useState("1y");
-  const { data, isLoading } = usePriceHistory(ticker, period);
+  const { data, error, isLoading } = usePriceHistory(ticker, period);
 
-  const dates = data?.map((c: any) => c.date) ?? [];
-  const closes = data?.map((c: any) => c.close) ?? [];
+  const candles = Array.isArray(data?.candles) ? data.candles : [];
+  const dates = candles.map((c: { date: string }) => c.date);
+  const closes = candles.map((c: { close: number }) => c.close);
 
   return (
     <div>
@@ -32,7 +34,9 @@ export default function PriceChart({ ticker }: PriceChartProps) {
         ))}
       </div>
 
-      {isLoading ? (
+      {error ? (
+        <ApiErrorNotice error={error} title="Не удалось загрузить историю цен" />
+      ) : isLoading ? (
         <div className="h-64 animate-pulse bg-surface-700 rounded-lg" />
       ) : (
         <Plot

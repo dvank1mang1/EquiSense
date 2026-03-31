@@ -1,3 +1,4 @@
+import ApiErrorNotice from "@/components/ApiErrorNotice";
 import { useFundamentals } from "@/hooks/useStockData";
 
 interface FundamentalPanelProps {
@@ -13,20 +14,44 @@ function MetricRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+type FundSnapshot = {
+  pe_ratio?: number;
+  eps?: number;
+  revenue_growth?: number;
+  roe?: number;
+  debt_to_equity?: number;
+  dividend_yield?: number;
+};
+
 export default function FundamentalPanel({ ticker }: FundamentalPanelProps) {
-  const { data, isLoading } = useFundamentals(ticker);
+  const { data, error, isLoading } = useFundamentals(ticker);
 
   if (isLoading) return <div className="card animate-pulse h-64" />;
+  if (error) {
+    return (
+      <div className="card">
+        <ApiErrorNotice error={error} title="Фундаментал недоступен" />
+      </div>
+    );
+  }
+
+  const f = (data?.fundamentals ?? {}) as FundSnapshot;
 
   return (
     <div className="card">
       <h3 className="mb-4">Фундаментал</h3>
-      <MetricRow label="P/E Ratio" value={data?.pe_ratio?.toFixed(1) ?? "—"} />
-      <MetricRow label="EPS" value={data?.eps != null ? `$${data.eps.toFixed(2)}` : "—"} />
-      <MetricRow label="Revenue Growth" value={data?.revenue_growth != null ? `${(data.revenue_growth * 100).toFixed(1)}%` : "—"} />
-      <MetricRow label="ROE" value={data?.roe != null ? `${(data.roe * 100).toFixed(1)}%` : "—"} />
-      <MetricRow label="Debt/Equity" value={data?.debt_to_equity?.toFixed(2) ?? "—"} />
-      <MetricRow label="Dividend Yield" value={data?.dividend_yield != null ? `${(data.dividend_yield * 100).toFixed(2)}%` : "—"} />
+      <MetricRow label="P/E Ratio" value={f.pe_ratio != null ? f.pe_ratio.toFixed(1) : "—"} />
+      <MetricRow label="EPS" value={f.eps != null ? `$${f.eps.toFixed(2)}` : "—"} />
+      <MetricRow
+        label="Revenue Growth"
+        value={f.revenue_growth != null ? `${(f.revenue_growth * 100).toFixed(1)}%` : "—"}
+      />
+      <MetricRow label="ROE" value={f.roe != null ? `${(f.roe * 100).toFixed(1)}%` : "—"} />
+      <MetricRow label="Debt/Equity" value={f.debt_to_equity != null ? f.debt_to_equity.toFixed(2) : "—"} />
+      <MetricRow
+        label="Dividend Yield"
+        value={f.dividend_yield != null ? `${(f.dividend_yield * 100).toFixed(2)}%` : "—"}
+      />
     </div>
   );
 }

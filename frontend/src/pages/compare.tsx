@@ -4,6 +4,7 @@ import Layout from "@/components/Layout";
 import TickerSearch from "@/components/TickerSearch";
 import ModelComparison from "@/components/ModelComparison";
 import BacktestChart from "@/components/BacktestChart";
+import { MODEL_LABELS_LONG, ROLLOUT_MODEL_IDS } from "@/lib/models";
 
 export default function ComparePage() {
   const [ticker, setTicker] = useState<string | null>(null);
@@ -18,7 +19,9 @@ export default function ComparePage() {
           <div className="flex items-center justify-between">
             <div>
               <h1>Сравнение моделей</h1>
-              <p className="text-slate-400 mt-1">Model A vs B vs C vs D — метрики и backtesting</p>
+              <p className="text-slate-400 mt-1">
+                Сравнение rollout-моделей (A–F): сигналы, метрики и backtesting
+              </p>
             </div>
             <TickerSearch onSelect={setTicker} />
           </div>
@@ -30,11 +33,9 @@ export default function ComparePage() {
                 <ModelComparison ticker={ticker} />
               </div>
 
-              {["model_a", "model_b", "model_c", "model_d"].map((model) => (
+              {ROLLOUT_MODEL_IDS.map((model) => (
                 <div key={model} className="card">
-                  <h2 className="mb-4">
-                    Backtesting — {model.replace("model_", "Model ").toUpperCase()}
-                  </h2>
+                  <h2 className="mb-4">Backtesting — {MODEL_LABELS_LONG[model] ?? model}</h2>
                   <BacktestChart ticker={ticker} model={model} />
                 </div>
               ))}

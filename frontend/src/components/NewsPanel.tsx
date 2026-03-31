@@ -1,3 +1,4 @@
+import ApiErrorNotice from "@/components/ApiErrorNotice";
 import { useNews } from "@/hooks/useStockData";
 import clsx from "clsx";
 
@@ -12,18 +13,25 @@ const SENTIMENT_BADGE: Record<string, string> = {
 };
 
 export default function NewsPanel({ ticker }: NewsPanelProps) {
-  const { data, isLoading } = useNews(ticker);
+  const { data, error, isLoading } = useNews(ticker);
 
   if (isLoading) return <div className="card animate-pulse h-64" />;
+  if (error) {
+    return (
+      <div className="card">
+        <ApiErrorNotice error={error} title="Новости недоступны" />
+      </div>
+    );
+  }
+
+  const items = Array.isArray(data?.news) ? data.news : [];
 
   return (
     <div className="card overflow-hidden">
       <h3 className="mb-4">Новости</h3>
       <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
-        {(data ?? []).length === 0 && (
-          <p className="text-slate-500 text-sm">Новости не найдены</p>
-        )}
-        {(data ?? []).map((item: any, i: number) => (
+        {items.length === 0 && <p className="text-slate-500 text-sm">Новости не найдены</p>}
+        {items.map((item: any, i: number) => (
           <a
             key={i}
             href={item.url}

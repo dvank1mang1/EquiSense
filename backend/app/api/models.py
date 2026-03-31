@@ -48,6 +48,20 @@ async def list_models():
                 "features": ["technical", "fundamental", "news"],
                 "algorithm": "XGBoost",
             },
+            {
+                "id": "model_e",
+                "name": "All Features (HistGradientBoosting)",
+                "features": ["technical", "fundamental", "news"],
+                "algorithm": "HistGradientBoostingClassifier",
+                "description": "Sklearn HGBM on the full tabular feature set; strong default for noisy structured data.",
+            },
+            {
+                "id": "model_f",
+                "name": "All Features (Voting ensemble)",
+                "features": ["technical", "fundamental", "news"],
+                "algorithm": "VotingClassifier(XGBoost, LightGBM)",
+                "description": "Soft-voting blend of gradient boosting variants with different inductive bias.",
+            },
         ]
     }
 
@@ -106,6 +120,7 @@ class PromoteChampionBody(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     reason: str = Field(default="manual promotion", min_length=3, max_length=200)
+    force: bool = False
 
 
 class ModelLifecycleResponse(BaseModel):
@@ -115,6 +130,7 @@ class ModelLifecycleResponse(BaseModel):
     champion_run_id: str | None = None
     updated_at: str
     history: list[dict[str, str]]
+    promotion_decision: dict[str, Any] | None = None
 
 
 class ChampionCatalogEntry(BaseModel):
@@ -238,7 +254,9 @@ async def promote_model_champion(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Unknown model id: {model_id!r}") from e
     try:
-        state = await service.promote_champion(model_id, run_id, reason=body.reason)
+        state, decision = await service.promote_champion(
+            model_id, run_id, reason=body.reason, force=body.force
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     resp = ModelLifecycleResponse(
@@ -246,6 +264,13 @@ async def promote_model_champion(
         champion_run_id=state.champion_run_id,
         updated_at=state.updated_at,
         history=state.history,
+        promotion_decision={
+            "accepted": decision.accepted,
+            "reason": decision.reason,
+            "candidate_run_id": decision.candidate_run_id,
+            "champion_before_run_id": decision.champion_before_run_id,
+            "checks": decision.checks or {},
+        },
     )
     logger.info(
         "models.promote done model_id={} champion_run_id={}",
@@ -253,6 +278,48 @@ async def promote_model_champion(
         resp.champion_run_id,
     )
     return resp
+
+
+class NightlyModelSummary(BaseModel):
+    model_id: str
+    latest_run_id: str | None = None
+    latest_status: str | None = None
+    latest_metrics: dict[str, Any] | None = None
+    champion_run_id: str | None = None
+    promotion_decision: dict[str, Any] | None = None
+
+
+class NightlySummaryResponse(BaseModel):
+    items: list[NightlyModelSummary]
+    total: int = Field(..., ge=0)
+
+
+@router.get("/nightly/summary", response_model=NightlySummaryResponse)
+async def get_nightly_summary(
+    limit_per_model: int = Query(default=1, ge=1, le=5),
+    service: TrainingService = Depends(get_training_service),
+):
+    from app.domain.identifiers import ROLLOUT_MODEL_IDS
+
+    items: list[NightlyModelSummary] = []
+    for mid in ROLLOUT_MODEL_IDS:
+        runs = await service.list_experiments(model_id=mid.value, ticker=None, limit=limit_per_model)
+        latest = runs[0] if runs else None
+        lifecycle = await service.get_lifecycle(mid.value)
+        promotion_decision = None
+        if latest and latest.metrics and isinstance(latest.metrics.get("promotion_decision"), dict):
+            promotion_decision = latest.metrics.get("promotion_decision")
+        items.append(
+            NightlyModelSummary(
+                model_id=mid.value,
+                latest_run_id=latest.run_id if latest else None,
+                latest_status=latest.status if latest else None,
+                latest_metrics=latest.metrics if latest else None,
+                champion_run_id=lifecycle.champion_run_id,
+                promotion_decision=promotion_decision,
+            )
+        )
+    return NightlySummaryResponse(items=items, total=len(items))
 
 
 @router.get("/{model_id}/experiments", response_model=ExperimentListResponse)

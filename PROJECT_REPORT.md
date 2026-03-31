@@ -83,6 +83,10 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - **Champion → артефакт inference:** обучение пишет run-scoped `model.joblib`, promote задаёт champion; predictions с селектором `champion` / `champion:model_a` грузят именно этот артефакт.
 - **Lifecycle persistence:** `LIFECYCLE_STORE_BACKEND=postgres` + таблицы `model_lifecycle` / `model_lifecycle_history` (с resilient fallback).
 - **FinBERT sentiment ETL:** `raw/news/{TICKER}.json` → `SentimentFeatureEngineer` (lazy load, `FINBERT_DEVICE` auto/cpu/cuda) → `processed/.../sentiment.parquet`; batch refresh при `run_etl` всегда вызывает `run_sentiment`; флаг **`refresh_news`** подтягивает новости перед ETL. Скрипт: `scripts/refresh_universe.py --run-etl --refresh-news`.
+- **Nightly data warmup (GitHub Actions):** добавлен workflow `.github/workflows/nightly-refresh-universe.yml`, который ежедневно в `01:30 UTC` ставит `refresh-universe` job (`run_etl=true`, `refresh_news=true`) и ждёт завершения через polling status endpoint.
+- **Model Ops automation (GitHub Actions):** добавлен workflow `.github/workflows/nightly-model-retrain.yml`, который ежедневно в `03:00 UTC` запускает train для `model_a..model_f`, ждёт terminal status и вызывает promotion endpoint с policy-gate.
+- **Promotion policy gate:** manual/auto promote теперь возвращает прозрачное `promotion_decision` (accepted/reason/checks). Решение пишется в `metrics.promotion_decision` run-а, а при accepted обновляется lifecycle champion.
+- **Ops summary endpoint:** `GET /api/v1/models/nightly/summary` показывает latest run/champion/promotion decision по rollout-моделям.
 - **Research stack hardening (ML):**
   - Добавлен **CPCV (Combinatorial Purged CV)** в `backend/app/ml/cv.py`: `combinatorial_purged_cv_splits(...)` с purge-окном `gap = label_horizon_days + embargo_days`, ограничением `max_splits` и seed-based sampling комбинаций.
   - Добавлены **OOF primary probabilities** для meta-labeling в `backend/app/ml/oof.py`: `oof_primary_proba(...)`; в research pack meta-модель учится на OOF-скоринге primary-модели (с fallback на val при недостатке строк).
@@ -124,6 +128,34 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
    ```
 
 3. Либо поднять API и вызвать `POST /stocks/{ticker}/refresh` (см. Swagger `/docs`).
+
+---
+
+## Nightly warmup: что выставить в GitHub
+
+Пока сервер может быть не поднят, ниже фиксируем значения для Actions заранее.
+
+### Secrets
+
+1. `NIGHTLY_REFRESH_API_BASE_URL` (**обязательно**)
+   - Базовый URL backend, без `/api/v1` в конце.
+   - Примеры:
+     - `https://api.equisense.yourdomain.com`
+     - `http://<server-ip>:8000`
+
+2. `NIGHTLY_REFRESH_BEARER_TOKEN` (**опционально**)
+   - Нужен, если API закрыт Bearer auth.
+   - Значение: сам токен строкой (без префикса `Bearer `).
+
+### Variables
+
+1. `NIGHTLY_TICKERS` (**рекомендуется**)
+   - Список тикеров через запятую, без кавычек.
+   - Пример:
+     - `AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,AVGO,AMD,TSM`
+
+Если `NIGHTLY_TICKERS` не задан, workflow использует дефолтный набор:
+`AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA`.
 
 ---
 

@@ -72,6 +72,14 @@ class _FakeStore:
         return Path(f"/tmp/{ticker}_{feature_type}.parquet")
 
 
+class _FakeMarketShouldNotBeCalled:
+    async def get_daily_ohlcv(
+        self, ticker: str, output_size: str = "full", *, skip_cache: bool = False
+    ):
+        _ = ticker, output_size, skip_cache
+        raise AssertionError("Network fallback must not be called in this test")
+
+
 @pytest.mark.integration
 def test_run_backtest_http_200(monkeypatch: pytest.MonkeyPatch) -> None:
     from main import app
@@ -189,3 +197,95 @@ def test_compare_backtest_models_http_returns_ok_flags(monkeypatch: pytest.Monke
         assert payload["comparison"]["model_d"]["ok"] is True
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
+def test_backtest_preflight_http_returns_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
+    from main import app
+
+    async def _no_cache(ticker: str):
+        _ = ticker
+        return None
+
+    monkeypatch.setattr(
+        "app.services.backtesting_service.read_ohlcv_parquet",
+        _no_cache,
+    )
+
+    class _StoreNoCombined(_FakeStore):
+        def exists(self, ticker: str, feature_type: str) -> bool:
+            _ = ticker
+            return feature_type != "combined"
+
+    app.dependency_overrides[get_backtesting_service] = lambda: BacktestingService(
+        market=_FakeMarket(),
+        features=_StoreNoCombined(),
+    )
+    try:
+        client = TestClient(app)
+        r = client.get("/api/v1/backtesting/AAPL/preflight")
+        assert r.status_code == 200
+        payload = r.json()
+        assert payload["ticker"] == "AAPL"
+        assert payload["ready"] is False
+        assert payload["has_cached_ohlcv"] is False
+        assert payload["has_combined_features"] is False
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
+def test_backtest_http_fails_without_cache_when_network_fallback_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.config import settings
+    from main import app
+
+    old_flag = settings.backtest_allow_network_fallback
+    settings.backtest_allow_network_fallback = False
+
+    async def _no_cache(ticker: str):
+        _ = ticker
+        return None
+
+    monkeypatch.setattr(
+        "app.services.backtesting_service.read_ohlcv_parquet",
+        _no_cache,
+    )
+
+    app.dependency_overrides[get_backtesting_service] = lambda: BacktestingService(
+        market=_FakeMarketShouldNotBeCalled(),
+        features=_FakeStore(),
+    )
+    try:
+        client = TestClient(app)
+        r = client.get("/api/v1/backtesting/AAPL?model=model_d")
+        assert r.status_code == 404
+        assert "No cached OHLCV for backtest" in r.text
+    finally:
+        settings.backtest_allow_network_fallback = old_flag
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
+def test_backtest_job_status_failed_returns_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    from main import app
+
+    monkeypatch.setattr(
+        "app.api.backtesting.safe_get_job",
+        lambda job_id: {
+            "run_id": job_id,
+            "status": "failed",
+            "payload": {},
+            "error": "Combined features are empty",
+        },
+    )
+    monkeypatch.setattr("app.api.backtesting.BacktestStore.load", lambda self, run_id: None)
+
+    with TestClient(app) as client:
+        r = client.get("/api/v1/backtesting/jobs/failing-job")
+        assert r.status_code == 200
+        payload = r.json()
+        assert payload["job_id"] == "failing-job"
+        assert payload["status"] == "failed"
+        assert "error" in payload

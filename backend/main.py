@@ -13,6 +13,33 @@ from app.api import router as api_router
 from app.core.config import settings
 from app.core.logging import setup_logging
 
+OPENAPI_TAGS = [
+    {
+        "name": "meta",
+        "description": "Версия API и навигация по разделам.",
+    },
+    {
+        "name": "stocks",
+        "description": "Котировки, фундаментал, новости, артефакты данных.",
+    },
+    {
+        "name": "predictions",
+        "description": "Прогнозы, SHAP, сравнение моделей, готовность данных.",
+    },
+    {
+        "name": "backtesting",
+        "description": "Бэктест стратегии по сигналам модели.",
+    },
+    {
+        "name": "models",
+        "description": "Каталог моделей, обучение и эксперименты.",
+    },
+    {
+        "name": "jobs",
+        "description": "Очередь фоновых задач и воркер.",
+    },
+]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,7 +56,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     description="ML-платформа для анализа и прогнозирования движения акций",
-    version="0.1.0",
+    version=settings.app_version,
+    openapi_tags=OPENAPI_TAGS,
+    contact={"name": "EquiSense"},
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -48,6 +77,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 
 
@@ -124,9 +154,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         },
     )
 
+
 app.include_router(api_router, prefix="/api/v1")
 
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "app": settings.app_name}
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "version": settings.app_version,
+        "api": {"prefix": "/api/v1", "docs": "/docs"},
+        "debug": settings.debug,
+    }

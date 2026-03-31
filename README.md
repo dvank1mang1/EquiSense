@@ -160,6 +160,34 @@ Worker operations API:
 - `GET /api/v1/jobs/worker/dead-letter` — list dead-letter runs.
 - `POST /api/v1/jobs/worker/dead-letter/{run_id}/requeue` — manual requeue for failed run.
 
+Model Ops additions:
+
+- `POST /api/v1/models/{model_id}/lifecycle/promote/{run_id}` now returns `promotion_decision`
+  (accepted/reason/checks), with optional `force=true` override.
+- `GET /api/v1/models/nightly/summary` — latest training + champion + promotion decision
+  across rollout models.
+- Nightly retrain workflow: `.github/workflows/nightly-model-retrain.yml`
+  (train model_a..model_f, then policy-based promote).
+
+### Nightly data warmup for backtesting
+
+To keep backtesting fast and independent from Alpha Vantage runtime limits, this repo includes
+scheduled workflow `.github/workflows/nightly-refresh-universe.yml`.
+
+It runs daily (01:30 UTC) and enqueues:
+
+- `POST /api/v1/jobs/refresh-universe`
+- with `run_etl=true` and `refresh_news=true`
+- then polls `GET /api/v1/jobs/refresh-universe/{run_id}` until completion.
+
+Configure in GitHub repository settings:
+
+- Secret `NIGHTLY_REFRESH_API_BASE_URL` (example: `https://api.example.com`)
+- Optional secret `NIGHTLY_REFRESH_BEARER_TOKEN`
+- Optional repo variable `NIGHTLY_TICKERS` (comma-separated tickers)
+
+You can also trigger it manually via Actions `workflow_dispatch` with custom ticker list.
+
 4. **Return to Kubernetes only by triggers**
    - Need horizontal scaling for API/workers.
    - Need controlled rolling deploys across multiple environments.

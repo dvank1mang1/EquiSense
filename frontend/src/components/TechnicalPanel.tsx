@@ -1,3 +1,4 @@
+import ApiErrorNotice from "@/components/ApiErrorNotice";
 import { useTechnicalIndicators } from "@/hooks/useStockData";
 
 interface TechnicalPanelProps {
@@ -19,9 +20,16 @@ function MetricRow({ label, value, highlight }: { label: string; value: string; 
 }
 
 export default function TechnicalPanel({ ticker }: TechnicalPanelProps) {
-  const { data, isLoading } = useTechnicalIndicators(ticker);
+  const { data, error, isLoading } = useTechnicalIndicators(ticker);
 
   if (isLoading) return <div className="card animate-pulse h-64" />;
+  if (error) {
+    return (
+      <div className="card">
+        <ApiErrorNotice error={error} title="Индикаторы недоступны" />
+      </div>
+    );
+  }
 
   return (
     <div className="card">
