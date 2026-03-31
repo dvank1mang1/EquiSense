@@ -31,6 +31,8 @@ from sklearn.metrics import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -84,8 +86,10 @@ def _load_combined_panel() -> pd.DataFrame:
         combined = combined.sort_values("date").reset_index(drop=True)
         combined["ticker"] = t
         combined["ret_1d"] = pd.to_numeric(combined["returns"], errors="coerce")
-        combined["target_up_1d"] = (combined["ret_1d"].shift(-1) > 0.0).astype(int)
-        rows.append(combined.iloc[:-1].copy())
+        # 5-day cumulative forward return (sum of next 5 daily returns)
+        fwd_5d = combined["ret_1d"].rolling(5).sum().shift(-5)
+        combined["target_up_5d"] = (fwd_5d > 0.01).astype(int)
+        rows.append(combined.iloc[:-5].copy())
 
     if not rows:
         raise RuntimeError("No combined processed data for any ticker")
@@ -209,7 +213,7 @@ def _cv_metrics(
     splits: list[tuple[np.ndarray, np.ndarray]],
     name: str,
 ) -> list[dict[str, object]]:
-    d = df.dropna(subset=["target_up_1d"]).copy()
+    d = df.dropna(subset=["target_up_5d"]).copy()
     dates = d["date"].values
     out: list[dict[str, object]] = []
     for fold, (train_d, test_d) in enumerate(splits):
@@ -217,8 +221,8 @@ def _cv_metrics(
         m_te = mask_for_dates(dates, test_d)
         if m_tr.sum() < 50 or m_te.sum() < 20:
             continue
-        x_tr, y_tr = d.loc[m_tr, features], d.loc[m_tr, "target_up_1d"].astype(int)
-        x_te, y_te = d.loc[m_te, features], d.loc[m_te, "target_up_1d"].astype(int)
+        x_tr, y_tr = d.loc[m_tr, features], d.loc[m_tr, "target_up_5d"].astype(int)
+        x_te, y_te = d.loc[m_te, features], d.loc[m_te, "target_up_5d"].astype(int)
         rf, imp = _fit_rf(x_tr, y_tr, None, None, trials=0)
         x_te_t = imp.transform(x_te)
         proba = rf.predict_proba(x_te_t)[:, 1]
@@ -405,15 +409,15 @@ def run_pipeline(
     train_dates = udates[:val_start]
 
     full_feats = groups["full"]
-    d = panel.dropna(subset=["target_up_1d"]).copy()
+    d = panel.dropna(subset=["target_up_5d"]).copy()
     dt = d["date"].values
     m_tr = mask_for_dates(dt, train_dates)
     m_va = mask_for_dates(dt, val_dates)
     m_te = mask_for_dates(dt, test_dates)
 
-    x_tr, y_tr = d.loc[m_tr, full_feats], d.loc[m_tr, "target_up_1d"].astype(int)
-    x_va, y_va = d.loc[m_va, full_feats], d.loc[m_va, "target_up_1d"].astype(int)
-    x_te, y_te = d.loc[m_te, full_feats], d.loc[m_te, "target_up_1d"].astype(int)
+    x_tr, y_tr = d.loc[m_tr, full_feats], d.loc[m_tr, "target_up_5d"].astype(int)
+    x_va, y_va = d.loc[m_va, full_feats], d.loc[m_va, "target_up_5d"].astype(int)
+    x_te, y_te = d.loc[m_te, full_feats], d.loc[m_te, "target_up_5d"].astype(int)
 
     label_dist = pd.DataFrame(
         [
@@ -464,11 +468,71 @@ def run_pipeline(
     x_te_t = imputer.transform(x_te)
     proba_rf_te = rf.predict_proba(x_te_t)[:, 1]
 
+    # XGBoost with Optuna
+    pos = int(y_tr.sum()); neg = int((y_tr == 0).sum())
+    spw = neg / pos if pos > 0 else 1.0
+    x_tr_imp = imputer.transform(x_tr)
+    x_va_imp = imputer.transform(x_va)
+
+    def _xgb_objective(trial: optuna.Trial) -> float:
+        clf = XGBClassifier(
+            n_estimators=trial.suggest_int("n_estimators", 100, 500),
+            max_depth=trial.suggest_int("max_depth", 3, 7),
+            learning_rate=trial.suggest_float("learning_rate", 0.01, 0.15, log=True),
+            subsample=trial.suggest_float("subsample", 0.6, 1.0),
+            colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
+            min_child_weight=trial.suggest_int("min_child_weight", 1, 10),
+            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
+            reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
+            scale_pos_weight=spw,
+            eval_metric="logloss",
+            random_state=42,
+        )
+        clf.fit(x_tr_imp, y_tr)
+        p = clf.predict_proba(x_va_imp)[:, 1]
+        return float(roc_auc_score(y_va, p))
+
+    xgb_study = optuna.create_study(direction="maximize")
+    xgb_study.optimize(_xgb_objective, n_trials=optuna_trials or 30, show_progress_bar=False)
+    best_xgb = XGBClassifier(**xgb_study.best_params, scale_pos_weight=spw,
+                              eval_metric="logloss", random_state=42)
+    best_xgb.fit(x_tr_imp, y_tr)
+    proba_xgb_te = best_xgb.predict_proba(x_te_t)[:, 1]
+
+    # LightGBM with Optuna
+    def _lgbm_objective(trial: optuna.Trial) -> float:
+        clf = LGBMClassifier(
+            n_estimators=trial.suggest_int("n_estimators", 100, 500),
+            num_leaves=trial.suggest_int("num_leaves", 20, 150),
+            max_depth=trial.suggest_int("max_depth", 3, 8),
+            learning_rate=trial.suggest_float("learning_rate", 0.01, 0.15, log=True),
+            feature_fraction=trial.suggest_float("feature_fraction", 0.5, 1.0),
+            bagging_fraction=trial.suggest_float("bagging_fraction", 0.5, 1.0),
+            bagging_freq=trial.suggest_int("bagging_freq", 1, 7),
+            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
+            reg_lambda=trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
+            class_weight="balanced",
+            random_state=42,
+            verbosity=-1,
+        )
+        clf.fit(x_tr_imp, y_tr)
+        p = clf.predict_proba(x_va_imp)[:, 1]
+        return float(roc_auc_score(y_va, p))
+
+    lgbm_study = optuna.create_study(direction="maximize")
+    lgbm_study.optimize(_lgbm_objective, n_trials=optuna_trials or 30, show_progress_bar=False)
+    best_lgbm = LGBMClassifier(**lgbm_study.best_params, class_weight="balanced",
+                                random_state=42, verbosity=-1)
+    best_lgbm.fit(x_tr_imp, y_tr)
+    proba_lgbm_te = best_lgbm.predict_proba(x_te_t)[:, 1]
+
     metrics_df = pd.DataFrame(
         [
             {"model": "logreg_baseline", **_metrics(y_te, proba_base_te)},
             {"model": "logreg_pca", **_metrics(y_te, proba_pca_te)},
             {"model": "random_forest_optuna", **_metrics(y_te, proba_rf_te)},
+            {"model": "xgboost_optuna", **_metrics(y_te, proba_xgb_te)},
+            {"model": "lightgbm_optuna", **_metrics(y_te, proba_lgbm_te)},
         ]
     ).sort_values("roc_auc", ascending=False)
     metrics_df.to_csv(OUT_DIR / "model_metrics.csv", index=False)
@@ -477,24 +541,37 @@ def run_pipeline(
     test_out["proba_baseline"] = proba_base_te
     test_out["proba_pca"] = proba_pca_te
     test_out["proba_rf"] = proba_rf_te
+    test_out["proba_xgb"] = proba_xgb_te
+    test_out["proba_lgbm"] = proba_lgbm_te
+
+    # Use best model (by val AUC) for backtesting
+    _val_aucs = {
+        "proba_rf": float(roc_auc_score(y_va, rf.predict_proba(x_va_imp)[:, 1])),
+        "proba_xgb": float(xgb_study.best_value),
+        "proba_lgbm": float(lgbm_study.best_value),
+    }
+    _best_proba_col = max(_val_aucs, key=_val_aucs.__getitem__)
 
     fi = pd.Series(rf.feature_importances_, index=full_feats).sort_values(ascending=False)
     fi.head(20).rename("importance").to_csv(OUT_DIR / "feature_importance_top20.csv")
 
-    # Threshold on validation (RF)
-    x_va_t = imputer.transform(x_va)
-    proba_va = rf.predict_proba(x_va_t)[:, 1]
-    thr = _pick_threshold(proba_va, d.loc[m_va, "ret_1d"].values)
+    # Threshold on validation (best model by val AUC)
+    _best_va_proba = {
+        "proba_rf": rf.predict_proba(x_va_imp)[:, 1],
+        "proba_xgb": best_xgb.predict_proba(x_va_imp)[:, 1],
+        "proba_lgbm": best_lgbm.predict_proba(x_va_imp)[:, 1],
+    }[_best_proba_col]
+    thr = _pick_threshold(_best_va_proba, d.loc[m_va, "ret_1d"].values)
 
     _backtest_daily(
         test_out,
-        proba_col="proba_rf",
+        proba_col=_best_proba_col,
         threshold=thr,
         cost_bps=0.0,
     )
     daily_net, stats_net = _backtest_daily(
         test_out,
-        proba_col="proba_rf",
+        proba_col=_best_proba_col,
         threshold=thr,
         cost_bps=cost_bps,
     )
@@ -522,7 +599,7 @@ def run_pipeline(
     d_tv["proba_primary_oof"] = oof_primary_proba(
         d_tv,
         full_feats,
-        "target_up_1d",
+        "target_up_5d",
         "date",
         oof_splits,
     )
@@ -816,7 +893,7 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 {label_md}
 
 ## Validation & leakage control
-- Target: `target_up_1d` = (next-day return > 0); features at `t` do not use future prices beyond the
+- Target: `target_up_5d` = (next-day return > 0); features at `t` do not use future prices beyond the
   engineered pipeline.
 - Walk-forward expanding splits and purged k-fold reduce overlap between train and test in time.
 - Threshold for strategy (`p >= {threshold:.2f}`) chosen on **validation** only, **not** on holdout.
