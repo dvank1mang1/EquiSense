@@ -28,7 +28,7 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - Threshold for strategy (`p >= 0.60`) chosen on **validation** only, **not** on holdout.
 
 ## Holdout metrics (best row by ROC-AUC)
-- **random_forest_optuna**: roc_auc=0.5023, pr_auc=0.3974, brier=0.3110, f1=0.3686
+- **lightgbm_optuna**: roc_auc=0.5159, pr_auc=0.4150, brier=0.2513, f1=0.4278
 
 ## Cross-validation (mean ROC-AUC across folds)
 - Walk-forward: **0.5066**
@@ -42,22 +42,22 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - `full`: 31 features
 
 ## Backtest (holdout, equal-weight, costs 2.0 bps per side on turnover)
-- Strategy equity (net): **0.935** vs buy-and-hold **3.672**
-- Meta-gated strategy equity (net): **1.190**
-- Relative uplift vs B&H: **-74.54%**
-- Net Sharpe (ann.): **-2.641**
-- Meta Net Sharpe (ann.): **6.869**
-- Max DD (net): **-0.0691**
+- Strategy equity (net): **0.920** vs buy-and-hold **3.672**
+- Meta-gated strategy equity (net): **1.032**
+- Relative uplift vs B&H: **-74.95%**
+- Net Sharpe (ann.): **-1.861**
+- Meta Net Sharpe (ann.): **3.655**
+- Max DD (net): **-0.0880**
 
 ## Diebold–Mariano (strategy vs benchmark log-loss)
-- DM stat: **2.3492**
-- p-value (two-sided): **1.8814e-02**
-- Meta DM stat: **7.6215**
-- Meta p-value (two-sided): **2.5080e-14**
+- DM stat: **1.2590**
+- p-value (two-sided): **2.0802e-01**
+- Meta DM stat: **8.5367**
+- Meta p-value (two-sided): **1.3807e-17**
 
 ## SPA-lite (block bootstrap on daily excess vs buy&hold)
-- Observed mean excess: **-0.009437**
-- One-sided p-value (H1: mean > 0): **0.5650**
+- Observed mean excess: **-0.009491**
+- One-sided p-value (H1: mean > 0): **0.5335**
 
 ## Interpretation (auto-generated checklist)
 - If **holdout ROC-AUC ≈ 0.5** and CV means are near 0.5, treat directional signal as **not demonstrated** on this panel; focus on pipeline sanity, not live trading.
