@@ -1,0 +1,19 @@
+Suggested order in the thesis (Results / Extended Results):
+
+1) strategy_comparison_table.md (+ strategy_comparison_clean.csv)
+   — Right after the first paragraph summarizing outcomes (main numeric artifact).
+
+2) sharpe_comparison.png
+   — Immediately after the strategy table (quick risk-adjusted read).
+
+3) quantile_returns.png
+   — After the paragraph explaining evaluation via ranking, not single-threshold AUC.
+
+4) cumulative_returns_by_quantile.png
+   — After quantile_returns.png (time-series evidence).
+
+5) ic_vs_precision.png
+   — Extended Results / discussion: signal vs. economic metrics need not align.
+
+6) long_short_cumulative.png (+ long_short_* CSVs)
+   — Optional extra: cumulative top-minus-bottom quantile spread.
