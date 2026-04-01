@@ -19,6 +19,32 @@ from app.domain.identifiers import ModelId
 from app.domain.prediction import PredictionOutcome, PredictionReadinessOutcome
 
 
+def _resolve_feature_set(instance: object) -> list[str]:
+    expected = getattr(instance, "expected_feature_set", None)
+    if callable(expected):
+        out = expected()
+        if isinstance(out, list):
+            return [str(v) for v in out]
+    raw = getattr(instance, "feature_set", [])
+    if isinstance(raw, list):
+        return [str(v) for v in raw]
+    return []
+
+
+def _validate_feature_columns(instance: object, frame: pd.DataFrame) -> list[str]:
+    checker = getattr(instance, "ensure_feature_columns", None)
+    if callable(checker):
+        checker(frame)
+        return _resolve_feature_set(instance)
+    required = _resolve_feature_set(instance)
+    missing = [c for c in required if c not in frame.columns]
+    if missing:
+        preview = missing[:8]
+        suffix = "..." if len(missing) > 8 else ""
+        raise ValueError(f"Missing feature columns for model: {preview}{suffix}")
+    return required
+
+
 class PredictionService:
     def __init__(
         self,
@@ -73,12 +99,12 @@ class PredictionService:
             if combined.empty:
                 checks["combined_features"] = {"ok": False, "detail": "combined features are empty"}
             else:
-                missing = [c for c in instance.feature_set if c not in combined.columns]
-                if missing:
-                    preview = ",".join(missing[:8])
+                try:
+                    _validate_feature_columns(instance, combined)
+                except ValueError as e:
                     checks["combined_features"] = {
                         "ok": False,
-                        "detail": f"missing required model columns: {preview}",
+                        "detail": str(e),
                     }
                 else:
                     checks["combined_features"] = {
@@ -134,15 +160,11 @@ class PredictionService:
         if X_last.empty:
             raise FeatureDataMissingError(f"Empty combined feature frame for {normalized}")
 
-        missing = [c for c in instance.feature_set if c not in X_last.columns]
-        if missing:
-            preview = missing[:8]
-            suffix = "..." if len(missing) > 8 else ""
-            raise FeatureDataMissingError(
-                f"Missing feature columns for {instance.model_id}: {preview}{suffix}"
-            )
-
-        X_model = X_last[instance.feature_set]
+        try:
+            model_features = _validate_feature_columns(instance, X_last)
+        except ValueError as e:
+            raise FeatureDataMissingError(str(e)) from e
+        X_model = X_last[model_features]
 
         def _positive_class_proba() -> float:
             arr = instance.predict_proba(X_model)

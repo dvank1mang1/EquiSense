@@ -62,6 +62,13 @@ async def list_models():
                 "algorithm": "VotingClassifier(XGBoost, LightGBM)",
                 "description": "Soft-voting blend of gradient boosting variants with different inductive bias.",
             },
+            {
+                "id": "model_g_ranker",
+                "name": "All Features (LightGBM Ranker)",
+                "features": ["technical", "fundamental", "news"],
+                "algorithm": "LGBMRanker(LambdaMART)",
+                "description": "Cross-sectional ranking model optimized for top-of-book selection.",
+            },
         ]
     }
 

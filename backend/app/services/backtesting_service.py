@@ -18,6 +18,33 @@ from app.models import get_model_class
 from app.schemas.backtest import BacktestMetrics, BacktestResponse, EquityPoint
 
 
+def _resolve_feature_set(instance: object) -> list[str]:
+    expected = getattr(instance, "expected_feature_set", None)
+    if callable(expected):
+        out = expected()
+        if isinstance(out, list):
+            return [str(v) for v in out]
+    raw = getattr(instance, "feature_set", [])
+    if isinstance(raw, list):
+        return [str(v) for v in raw]
+    return []
+
+
+def _validate_feature_columns(instance: object, frame: pd.DataFrame) -> list[str]:
+    checker = getattr(instance, "ensure_feature_columns", None)
+    if callable(checker):
+        checker(frame)
+        return _resolve_feature_set(instance)
+    required = _resolve_feature_set(instance)
+    available = [c for c in required if c in frame.columns]
+    if available:
+        return available
+    if required:
+        preview = ",".join(required[:8])
+        raise ValueError(f"Missing model feature columns: {preview}")
+    raise ValueError("Model has empty feature_set")
+
+
 @dataclass(frozen=True)
 class BacktestCompareRow:
     model: str
@@ -131,11 +158,11 @@ class BacktestingService:
         if price_df.empty or combined.empty:
             raise BacktestInputError("No data in selected date range")
 
-        missing = [c for c in instance.feature_set if c not in combined.columns]
-        if missing:
-            raise BacktestDependencyError(f"Missing model feature columns: {','.join(missing[:8])}")
-
-        x_model = combined[instance.feature_set].fillna(0.0)
+        try:
+            features = _validate_feature_columns(instance, combined)
+        except ValueError as e:
+            raise BacktestDependencyError(str(e)) from e
+        x_model = combined[features].fillna(0.0)
         probs = instance.predict_proba(x_model)
         preds = combined[["date"]].copy()
         preds["probability"] = probs[:, 1]
@@ -166,6 +193,7 @@ class BacktestingService:
                 max_drawdown=out.max_drawdown,
                 win_rate=out.win_rate,
                 total_trades=out.total_trades,
+                turnover=out.turnover,
             ),
             equity_curve=curve,
         )
@@ -205,6 +233,7 @@ class BacktestingService:
                         "max_drawdown": res.metrics.max_drawdown,
                         "win_rate": res.metrics.win_rate,
                         "total_trades": res.metrics.total_trades,
+                        "turnover": float(res.metrics.turnover or 0.0),
                     },
                 )
             except (BacktestDependencyError, BacktestInputError) as e:

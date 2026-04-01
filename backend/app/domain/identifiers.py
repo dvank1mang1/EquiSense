@@ -9,6 +9,7 @@ class ModelId(StrEnum):
     MODEL_D = "model_d"
     MODEL_E = "model_e"
     MODEL_F = "model_f"
+    MODEL_G_RANKER = "model_g_ranker"
 
 
 # Production rollout set (excludes baseline LR).

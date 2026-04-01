@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import json
 from pathlib import Path
 
 import joblib
@@ -21,6 +22,7 @@ class BaseMLModel(ABC):
         self.model = None
         self.is_trained = False
         self.model_path = Path(settings.model_dir) / f"{self.model_id}.joblib"
+        self._loaded_feature_set: list[str] | None = None
 
     @abstractmethod
     def train(self, X: pd.DataFrame, y: pd.Series) -> None:
@@ -68,6 +70,14 @@ class BaseMLModel(ABC):
         target = Path(artifact_path) if artifact_path is not None else self.model_path
         target.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(self.model, target)
+        meta = {
+            "model_id": self.model_id,
+            "feature_set": list(self.feature_set),
+        }
+        target.with_suffix(target.suffix + ".meta.json").write_text(
+            json.dumps(meta, ensure_ascii=True, sort_keys=True),
+            encoding="utf-8",
+        )
 
     def load(self, artifact_path: str | Path | None = None) -> None:
         """Загрузить модель с диска."""
@@ -75,7 +85,30 @@ class BaseMLModel(ABC):
         if not target.exists():
             raise FileNotFoundError(f"Model file not found: {target}")
         self.model = joblib.load(target)
+        meta_path = target.with_suffix(target.suffix + ".meta.json")
+        self._loaded_feature_set = None
+        if meta_path.exists():
+            try:
+                payload = json.loads(meta_path.read_text(encoding="utf-8"))
+                raw = payload.get("feature_set")
+                if isinstance(raw, list) and all(isinstance(v, str) for v in raw):
+                    self._loaded_feature_set = list(raw)
+            except (json.JSONDecodeError, OSError, TypeError, ValueError):
+                # Keep backward compatibility with old/invalid sidecar format.
+                self._loaded_feature_set = None
         self.is_trained = True
+
+    def expected_feature_set(self) -> list[str]:
+        if self._loaded_feature_set:
+            return self._loaded_feature_set
+        return list(self.feature_set)
+
+    def ensure_feature_columns(self, frame: pd.DataFrame) -> None:
+        required = self.expected_feature_set()
+        missing = [c for c in required if c not in frame.columns]
+        if missing:
+            preview = ",".join(missing[:8])
+            raise ValueError(f"missing model feature columns: {preview}")
 
     def get_signal(self, probability: float) -> str:
         """Конвертировать вероятность в торговый сигнал."""

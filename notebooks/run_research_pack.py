@@ -57,6 +57,12 @@ from app.ml.cv import (  # noqa: E402
     purged_kfold_with_horizon,
     walk_forward_expanding_splits,
 )
+from app.ml.evaluation import (  # noqa: E402
+    financial_selection_metrics,
+    information_coefficient_metrics,
+    precision_recall_at_k,
+    reliability_curve_and_ece,
+)
 from app.ml.finance_stats import (  # noqa: E402
     annualized_sharpe,
     diebold_mariano,
@@ -136,7 +142,9 @@ def _label_split_stats(y: pd.Series, split: str) -> dict[str, object]:
     }
 
 
-def _metrics(y_true: pd.Series, proba: np.ndarray) -> dict[str, float]:
+def _metrics(
+    y_true: pd.Series, proba: np.ndarray, eval_frame: pd.DataFrame | None = None
+) -> dict[str, float]:
     pred = (proba >= 0.5).astype(int)
     out: dict[str, float] = {
         "accuracy": float(accuracy_score(y_true, pred)),
@@ -151,6 +159,17 @@ def _metrics(y_true: pd.Series, proba: np.ndarray) -> dict[str, float]:
         out["pr_auc"] = float(average_precision_score(y_true, proba))
     except ValueError:
         out["pr_auc"] = float("nan")
+    rank = precision_recall_at_k(y_true, proba, k=max(1, int(len(y_true) * 0.25)))
+    out["precision_at_k"] = float(rank["precision_at_k"])
+    out["recall_at_k"] = float(rank["recall_at_k"])
+    rel_df, ece = reliability_curve_and_ece(y_true, proba, n_bins=10)
+    out["ece"] = float(ece)
+    if eval_frame is not None and not eval_frame.empty:
+        fm = financial_selection_metrics(eval_frame, score_col="score", return_col="forward_return")
+        icm = information_coefficient_metrics(eval_frame, score_col="score", return_col="forward_return")
+        out.update({k: float(v) for k, v in fm.items()})
+        out.update({k: float(v) for k, v in icm.items()})
+    out["_reliability_rows"] = rel_df.to_dict(orient="records")
     return out
 
 
@@ -320,6 +339,50 @@ def _backtest_from_signal(
         "sharpe_bh": annualized_sharpe(daily["ret_1d"].values),
         "sharpe_strategy_net": annualized_sharpe(daily["net_ret"].values),
         "max_dd_net": max_drawdown(daily["strategy_curve_net"].values),
+    }
+    return daily, stats
+
+
+def _backtest_top_k(
+    df: pd.DataFrame,
+    *,
+    score_col: str,
+    top_k: int = 10,
+) -> tuple[pd.DataFrame, dict[str, float]]:
+    bt = df[["date", "ticker", "ret_1d", score_col]].copy()
+    bt = bt.rename(columns={score_col: "score"})
+    bt = bt.dropna(subset=["date", "ticker", "ret_1d", "score"])
+    picks = []
+    for dt, g in bt.groupby("date"):
+        gs = g.sort_values("score", ascending=False).copy()
+        k = max(1, min(top_k, len(gs)))
+        gs["selected"] = 0.0
+        gs.iloc[:k, gs.columns.get_loc("selected")] = 1.0
+        picks.append(gs)
+    ranked = pd.concat(picks, ignore_index=True) if picks else bt.assign(selected=0.0)
+    daily = (
+        ranked.groupby("date", as_index=False)
+        .agg({"ret_1d": "mean", "selected": "mean"})
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    sel_ret = (
+        ranked[ranked["selected"] > 0.0]
+        .groupby("date", as_index=False)["ret_1d"]
+        .mean()
+        .rename(columns={"ret_1d": "topk_ret"})
+    )
+    daily = daily.merge(sel_ret, on="date", how="left")
+    daily["topk_ret"] = daily["topk_ret"].fillna(0.0)
+    daily["curve_topk"] = (1.0 + daily["topk_ret"]).cumprod()
+    daily["curve_universe"] = (1.0 + daily["ret_1d"]).cumprod()
+    daily["turnover"] = daily["selected"].diff().abs().fillna(daily["selected"].iloc[0])
+    stats = {
+        "topk_sharpe": annualized_sharpe(daily["topk_ret"].values),
+        "universe_sharpe": annualized_sharpe(daily["ret_1d"].values),
+        "topk_turnover": float(daily["turnover"].mean()),
+        "topk_cum_return": float(daily["curve_topk"].iloc[-1] - 1.0),
+        "universe_cum_return": float(daily["curve_universe"].iloc[-1] - 1.0),
     }
     return daily, stats
 
@@ -526,16 +589,27 @@ def run_pipeline(
     best_lgbm.fit(x_tr_imp, y_tr)
     proba_lgbm_te = best_lgbm.predict_proba(x_te_t)[:, 1]
 
-    metrics_df = pd.DataFrame(
-        [
-            {"model": "logreg_baseline", **_metrics(y_te, proba_base_te)},
-            {"model": "logreg_pca", **_metrics(y_te, proba_pca_te)},
-            {"model": "random_forest_optuna", **_metrics(y_te, proba_rf_te)},
-            {"model": "xgboost_optuna", **_metrics(y_te, proba_xgb_te)},
-            {"model": "lightgbm_optuna", **_metrics(y_te, proba_lgbm_te)},
-        ]
-    ).sort_values("roc_auc", ascending=False)
+    eval_base = d.loc[m_te, ["date", "ticker", "ret_1d"]].copy()
+    eval_base = eval_base.rename(columns={"ret_1d": "forward_return"})
+    metrics_rows = []
+    reliability_rows = []
+    for model_name, model_proba in [
+        ("logreg_baseline", proba_base_te),
+        ("logreg_pca", proba_pca_te),
+        ("random_forest_optuna", proba_rf_te),
+        ("xgboost_optuna", proba_xgb_te),
+        ("lightgbm_optuna", proba_lgbm_te),
+    ]:
+        ef = eval_base.copy()
+        ef["score"] = model_proba
+        m = _metrics(y_te, model_proba, ef)
+        rel = m.pop("_reliability_rows", [])
+        for row in rel:
+            reliability_rows.append({"model": model_name, **row})
+        metrics_rows.append({"model": model_name, **m})
+    metrics_df = pd.DataFrame(metrics_rows).sort_values("roc_auc", ascending=False)
     metrics_df.to_csv(OUT_DIR / "model_metrics.csv", index=False)
+    pd.DataFrame(reliability_rows).to_csv(OUT_DIR / "reliability_curve.csv", index=False)
 
     test_out = d.loc[m_te, ["date", "ticker", "ret_1d"]].copy()
     test_out["proba_baseline"] = proba_base_te
@@ -607,7 +681,7 @@ def run_pipeline(
     meta_train["proba_primary_for_meta"] = meta_train["proba_primary_oof"]
     if len(meta_train) < 80:
         val_df = d.loc[m_va].copy().reset_index(drop=True)
-        val_df["proba_primary_for_meta"] = proba_va
+        val_df["proba_primary_for_meta"] = _best_va_proba
         meta_train = val_df
         y_meta_val = build_meta_labels(
             meta_train,
@@ -651,6 +725,12 @@ def run_pipeline(
         cost_bps=cost_bps,
     )
     daily_meta.to_csv(OUT_DIR / "backtest_curves_meta.csv", index=False)
+    daily_topk, stats_topk = _backtest_top_k(
+        test_out,
+        score_col=_best_proba_col,
+        top_k=10,
+    )
+    daily_topk.to_csv(OUT_DIR / "backtest_curves_topk.csv", index=False)
 
     dm = _diebold_on_test(test_out, proba_col="proba_rf", threshold=thr)
     test_out["proba_meta_gated"] = test_out["proba_rf"] * (test_out["proba_meta"] >= 0.55).astype(float)
@@ -674,6 +754,36 @@ def run_pipeline(
         "threshold": thr,
     }
     pd.DataFrame([stats_row]).to_csv(OUT_DIR / "backtest_stats.csv", index=False)
+    pd.DataFrame([stats_topk]).to_csv(OUT_DIR / "backtest_topk_stats.csv", index=False)
+
+    # Aggregated model comparison dashboard.
+    baseline_auc = float(metrics_df.loc[metrics_df["model"] == "logreg_baseline", "roc_auc"].iloc[0])
+    dashboard = metrics_df[
+        [
+            "model",
+            "roc_auc",
+            "ic_mean",
+            "rank_ic_mean",
+            "long_short_spread",
+            "top_quantile_return",
+        ]
+    ].copy()
+    dashboard["mean_auc"] = dashboard["roc_auc"]
+    dashboard["mean_ic"] = dashboard["ic_mean"]
+    dashboard["average_return"] = dashboard["top_quantile_return"]
+    dashboard["beats_baseline_auc"] = (dashboard["roc_auc"] > baseline_auc).astype(int)
+    dashboard["beat_baseline_pct"] = dashboard["beats_baseline_auc"] * 100.0
+    best_col_to_model = {
+        "proba_rf": "random_forest_optuna",
+        "proba_xgb": "xgboost_optuna",
+        "proba_lgbm": "lightgbm_optuna",
+    }
+    dashboard["sharpe_ratio"] = np.where(
+        dashboard["model"] == best_col_to_model.get(_best_proba_col, ""),
+        stats_net.get("sharpe_strategy_net", np.nan),
+        np.nan,
+    )
+    dashboard.to_csv(OUT_DIR / "model_comparison_dashboard.csv", index=False)
 
     pd.DataFrame(
         [

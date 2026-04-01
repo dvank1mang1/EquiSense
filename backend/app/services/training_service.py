@@ -8,12 +8,21 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
+import numpy as np
 import pandas as pd
 from loguru import logger
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
 
 from app.contracts.features import FeatureStorePort
 from app.core.config import get_settings
 from app.domain.identifiers import ModelId
+from app.ml.evaluation import (
+    financial_selection_metrics,
+    information_coefficient_metrics,
+    precision_recall_at_k,
+    reliability_curve_and_ece,
+)
 from app.ml.training_pipeline import calibrate_production_model, fit_production_pipeline
 from app.models import get_model_class
 from app.services.lifecycle_store import LifecycleStore, ModelLifecycleState
@@ -237,15 +246,49 @@ class TrainingService:
                 x_test = test_df[instance.feature_set]
                 y_test = test_df["target"]
 
-                await asyncio.to_thread(fit_production_pipeline, instance, x_train, y_train)
-                calibration_status = await asyncio.to_thread(
-                    calibrate_production_model,
-                    instance,
-                    x_val,
-                    y_val,
-                    min_samples=settings.training_calibration_min_val_samples,
-                )
+                is_ranker = bool(getattr(instance, "is_ranking_model", False))
+                if is_ranker:
+                    imputer = SimpleImputer(strategy="median")
+                    x_train_i = pd.DataFrame(
+                        imputer.fit_transform(x_train),
+                        columns=instance.feature_set,
+                        index=x_train.index,
+                    )
+                    train_dates = pd.to_datetime(train_df["date"], errors="coerce").dt.normalize()
+                    group = [int(v) for v in train_dates.value_counts(sort=False).sort_index().values]
+                    await asyncio.to_thread(
+                        instance.fit_ranker,  # type: ignore[attr-defined]
+                        x_train_i,
+                        y_train,
+                        group=group,
+                    )
+                    # Persist preprocessing in-model for compatible inference path.
+                    instance.model = Pipeline([("imputer", imputer), ("ranker", instance.model)])
+                    calibration_status = "skipped_ranking_model"
+                else:
+                    await asyncio.to_thread(fit_production_pipeline, instance, x_train, y_train)
+                    calibration_status = await asyncio.to_thread(
+                        calibrate_production_model,
+                        instance,
+                        x_val,
+                        y_val,
+                        min_samples=settings.training_calibration_min_val_samples,
+                    )
                 metrics = await asyncio.to_thread(instance.evaluate, x_test, y_test)
+                proba = await asyncio.to_thread(instance.predict_proba, x_test)
+                y_score = pd.Series(proba[:, 1], index=test_df.index, dtype=float)
+                rank_k = max(1, int(len(test_df) * 0.25))
+                ranking_metrics = precision_recall_at_k(y_test, y_score, k=rank_k)
+                eval_frame = pd.DataFrame(
+                    {
+                        "date": test_df.get("date"),
+                        "score": y_score,
+                        "forward_return": pd.to_numeric(test_df["forward_return"], errors="coerce"),
+                    }
+                )
+                fin_metrics = financial_selection_metrics(eval_frame)
+                ic_metrics = information_coefficient_metrics(eval_frame)
+                reliability_df, ece = reliability_curve_and_ece(y_test, y_score, n_bins=10)
                 artifact_path = str(_artifact_path_for_run(model_id.value, run.run_id))
                 await asyncio.to_thread(instance.save, artifact_path)
                 metrics = {
@@ -260,6 +303,13 @@ class TrainingService:
                     "test_rows": int(len(test_df)),
                     "calibration": calibration_status,
                     "calibration_isotonic": calibration_status == "isotonic_applied",
+                    "precision_at_k": float(ranking_metrics["precision_at_k"]),
+                    "recall_at_k": float(ranking_metrics["recall_at_k"]),
+                    "rank_k": int(rank_k),
+                    "ece": float(ece),
+                    "reliability_curve": reliability_df.to_dict(orient="records"),
+                    **{k: float(v) for k, v in fin_metrics.items()},
+                    **{k: float(v) for k, v in ic_metrics.items()},
                 }
                 if "date" in train_df.columns and not train_df.empty and not val_df.empty:
                     metrics["train_date_max"] = str(
@@ -525,10 +575,9 @@ def _prepare_training_frames(
         raise ValueError(f"combined frame missing model features: {','.join(missing[:8])}")
 
     ret = pd.to_numeric(work["returns"], errors="coerce")
-    work["_next_return"] = ret.shift(-1)
-    work = work.dropna(subset=["_next_return"])
-    work["target"] = (work["_next_return"] > 0.0).astype("int64")
-    work = work.drop(columns=["_next_return"])
+    work["forward_return"] = ret.shift(-1)
+    work = work.dropna(subset=["forward_return"])
+    work["target"] = (work["forward_return"] > 0.0).astype("int64")
 
     work = work.dropna(subset=feature_set)
     if len(work) < min_rows:
@@ -539,15 +588,32 @@ def _prepare_training_frames(
     if not (0.0 < train_fraction < val_end_fraction < 1.0):
         raise ValueError("train_fraction and val_end_fraction must satisfy 0 < train < val_end < 1")
 
-    n = len(work)
-    i_val = int(train_fraction * n)
-    i_test = int(val_end_fraction * n)
-    i_val = max(10, min(i_val, n - 20))
-    i_test = max(i_val + 5, min(i_test, n - 5))
-
-    train_df = work.iloc[:i_val].copy()
-    val_df = work.iloc[i_val:i_test].copy()
-    test_df = work.iloc[i_test:].copy()
+    if "date" not in work.columns:
+        n = len(work)
+        i_val = int(train_fraction * n)
+        i_test = int(val_end_fraction * n)
+        i_val = max(10, min(i_val, n - 20))
+        i_test = max(i_val + 5, min(i_test, n - 5))
+        train_df = work.iloc[:i_val].copy()
+        val_df = work.iloc[i_val:i_test].copy()
+        test_df = work.iloc[i_test:].copy()
+    else:
+        work["date"] = pd.to_datetime(work["date"], errors="coerce")
+        work = work.dropna(subset=["date"]).copy()
+        unique_dates = np.sort(work["date"].dt.normalize().unique())
+        if len(unique_dates) < 20:
+            raise ValueError("not enough unique dates for train/validation/test split")
+        i_val = max(5, min(int(train_fraction * len(unique_dates)), len(unique_dates) - 10))
+        i_test = max(
+            i_val + 3,
+            min(int(val_end_fraction * len(unique_dates)), len(unique_dates) - 3),
+        )
+        train_dates = set(unique_dates[:i_val])
+        val_dates = set(unique_dates[i_val:i_test])
+        test_dates = set(unique_dates[i_test:])
+        train_df = work[work["date"].dt.normalize().isin(train_dates)].copy()
+        val_df = work[work["date"].dt.normalize().isin(val_dates)].copy()
+        test_df = work[work["date"].dt.normalize().isin(test_dates)].copy()
 
     if "date" in train_df.columns and not train_df.empty and not val_df.empty and not test_df.empty:
         tr_end = pd.to_datetime(train_df["date"], errors="coerce").max()

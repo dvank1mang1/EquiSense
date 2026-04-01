@@ -18,6 +18,7 @@ class BacktestResult:
     win_rate: float
     total_trades: int
     equity_curve: pd.DataFrame
+    turnover: float = 0.0
 
 
 class BacktestEngine:
@@ -115,6 +116,7 @@ class BacktestEngine:
         sharpe_ratio = self._compute_sharpe(merged["strategy_ret"])
         max_drawdown = self._compute_max_drawdown(merged["equity"])
         win_rate = self._compute_win_rate(trades)
+        turnover = float(merged["position"].diff().abs().fillna(merged["position"].iloc[0]).mean())
 
         return BacktestResult(
             ticker=ticker.upper(),
@@ -128,6 +130,7 @@ class BacktestEngine:
             max_drawdown=max_drawdown,
             win_rate=win_rate,
             total_trades=len(trades),
+            turnover=turnover,
             equity_curve=merged[["date", "equity", "return_pct", "benchmark_equity"]].copy(),
         )
 
@@ -155,3 +158,61 @@ class BacktestEngine:
             return 0.0
         wins = sum(1 for t in trades if float(t.get("pnl_pct", 0.0)) > 0.0)
         return float(wins / len(trades))
+
+    def run_cross_sectional_top_k(
+        self,
+        panel_df: pd.DataFrame,
+        *,
+        score_col: str = "score",
+        return_col: str = "forward_return",
+        top_k: int = 10,
+    ) -> dict[str, float]:
+        """
+        Ranking backtest: each date buy top-K by model score, equal-weight.
+        """
+        req = {"date", "ticker", score_col, return_col}
+        if not req.issubset(panel_df.columns):
+            raise ValueError(f"panel_df must contain {sorted(req)}")
+        d = panel_df[list(req)].dropna().copy()
+        d["date"] = pd.to_datetime(d["date"])
+        if d.empty:
+            raise ValueError("panel_df has no valid rows")
+        rows: list[dict[str, float | pd.Timestamp]] = []
+        for dt, g in d.groupby("date"):
+            gs = g.sort_values(score_col, ascending=False)
+            k = max(1, min(int(top_k), len(gs)))
+            top = gs.iloc[:k]
+            bottom = gs.iloc[-k:]
+            rows.append(
+                {
+                    "date": dt,
+                    "top_ret": float(top[return_col].mean()),
+                    "bottom_ret": float(bottom[return_col].mean()),
+                }
+            )
+        daily = pd.DataFrame(rows).sort_values("date")
+        daily["long_short_ret"] = daily["top_ret"] - daily["bottom_ret"]
+        daily["curve_long_short"] = (1.0 + daily["long_short_ret"]).cumprod()
+        daily["curve_long_only"] = (1.0 + daily["top_ret"]).cumprod()
+        turnover = (
+            d.sort_values(["date", score_col], ascending=[True, False])
+            .groupby("date")
+            .head(max(1, top_k))[["date", "ticker"]]
+        )
+        turns = []
+        prev: set[str] = set()
+        for _, g in turnover.groupby("date"):
+            curr = set(g["ticker"].astype(str))
+            if not prev:
+                turns.append(1.0)
+            else:
+                turns.append(1.0 - (len(prev & curr) / max(1, len(curr))))
+            prev = curr
+        return {
+            "topk_mean_return": float(daily["top_ret"].mean()),
+            "bottomk_mean_return": float(daily["bottom_ret"].mean()),
+            "long_short_mean_return": float(daily["long_short_ret"].mean()),
+            "long_short_sharpe": self._compute_sharpe(daily["long_short_ret"]),
+            "long_only_sharpe": self._compute_sharpe(daily["top_ret"]),
+            "turnover": float(np.mean(turns)) if turns else 0.0,
+        }

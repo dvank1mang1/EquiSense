@@ -28,6 +28,7 @@ class BacktestMetrics(BaseModel):
     max_drawdown: float
     win_rate: float
     total_trades: int
+    turnover: float | None = None
 
 
 class BacktestResponse(BaseModel):

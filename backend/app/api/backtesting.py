@@ -197,6 +197,7 @@ async def compare_backtest_models(
                 max_drawdown=float(v.metrics["max_drawdown"]),
                 win_rate=float(v.metrics["win_rate"]),
                 total_trades=int(v.metrics["total_trades"]),
+                turnover=float(v.metrics.get("turnover", 0.0)),
             )
         comparison[k] = BacktestCompareEntry(
             model=v.model,
