@@ -108,10 +108,16 @@ def _feature_groups(df: pd.DataFrame) -> dict[str, list[str]]:
     tech = [c for c in TECHNICAL_FEATURES + LAG_FEATURES if c in cols]
     fund = [c for c in FUNDAMENTAL_FEATURES if c in cols]
     sent = [c for c in SENTIMENT_FEATURES if c in cols]
+    hybrid = tech + fund + sent
     return {
+        "technical_only": tech,
+        "fundamental_strategy": fund,
+        "alternative_data_strategy": sent,
+        "hybrid_strategy": hybrid,
+        # Backward-compatible aliases used in legacy parts of the script/report.
         "tech_only": tech,
         "tech_fund": tech + fund,
-        "full": tech + fund + sent,
+        "full": hybrid,
     }
 
 
@@ -385,6 +391,42 @@ def _backtest_top_k(
         "universe_cum_return": float(daily["curve_universe"].iloc[-1] - 1.0),
     }
     return daily, stats
+
+
+def _strategy_rank_eval(
+    scored: pd.DataFrame,
+    *,
+    y_true: pd.Series,
+    top_k: int = 10,
+) -> dict[str, float]:
+    rank = precision_recall_at_k(y_true, scored["score"].values, k=max(1, int(len(scored) * 0.25)))
+    fm = financial_selection_metrics(scored, score_col="score", return_col="forward_return")
+    icm = information_coefficient_metrics(scored, score_col="score", return_col="forward_return")
+    rows = []
+    for _, g in scored.groupby("date"):
+        gs = g.sort_values("score", ascending=False)
+        k = max(1, min(top_k, len(gs)))
+        top = gs.iloc[:k]
+        rows.append(float(top["forward_return"].mean()))
+    daily = np.asarray(rows, dtype=float) if rows else np.asarray([0.0], dtype=float)
+    selected = []
+    for _, g in scored.groupby("date"):
+        gs = g.sort_values("score", ascending=False)
+        k = max(1, min(top_k, len(gs)))
+        selected.extend(gs.iloc[:k]["forward_return"].tolist())
+    selected_arr = np.asarray(selected, dtype=float) if selected else np.asarray([0.0], dtype=float)
+    return {
+        "precision_at_k": float(rank["precision_at_k"]),
+        "recall_at_k": float(rank["recall_at_k"]),
+        "ic": float(icm.get("ic_mean", np.nan)),
+        "rank_ic": float(icm.get("rank_ic_mean", np.nan)),
+        "quantile_top_return": float(fm.get("top_quantile_return", np.nan)),
+        "quantile_bottom_return": float(fm.get("bottom_quantile_return", np.nan)),
+        "long_short_spread": float(fm.get("long_short_spread", np.nan)),
+        "sharpe": float(annualized_sharpe(daily)),
+        "average_return": float(np.nanmean(daily)),
+        "hit_rate": float(np.nanmean(selected_arr > 0.0)),
+    }
 
 
 def _diebold_on_test(
@@ -785,6 +827,48 @@ def run_pipeline(
     )
     dashboard.to_csv(OUT_DIR / "model_comparison_dashboard.csv", index=False)
 
+    # Strategy-level comparison aligned with thesis topic:
+    # technical vs fundamental vs alternative vs hybrid.
+    strategy_rows: list[dict[str, float | str]] = []
+    for strategy in [
+        "technical_only",
+        "fundamental_strategy",
+        "alternative_data_strategy",
+        "hybrid_strategy",
+    ]:
+        feats = groups.get(strategy, [])
+        if len(feats) < 2:
+            continue
+        x_tr_s = d.loc[m_tr, feats]
+        y_tr_s = d.loc[m_tr, "target_up_5d"].astype(int)
+        x_te_s = d.loc[m_te, feats]
+        y_te_s = d.loc[m_te, "target_up_5d"].astype(int)
+        model_s, imp_s = _fit_rf(x_tr_s, y_tr_s, None, None, trials=0)
+        proba_s = model_s.predict_proba(imp_s.transform(x_te_s))[:, 1]
+        scored_s = d.loc[m_te, ["date", "ticker", "ret_1d"]].copy()
+        scored_s = scored_s.rename(columns={"ret_1d": "forward_return"})
+        scored_s["score"] = proba_s
+        rank_eval = _strategy_rank_eval(scored_s, y_true=y_te_s, top_k=10)
+        strategy_rows.append(
+            {
+                "strategy": strategy,
+                "auc": float(roc_auc_score(y_te_s, proba_s)),
+                **rank_eval,
+            }
+        )
+    strategy_df = pd.DataFrame(strategy_rows).sort_values("sharpe", ascending=False)
+    strategy_df.to_csv(OUT_DIR / "strategy_comparison.csv", index=False)
+    if not strategy_df.empty:
+        best = strategy_df.iloc[0]
+        interp = (
+            "# Strategy Interpretation\n\n"
+            f"- Best strategy: **{best['strategy']}**\n"
+            f"- IC: **{best['ic']:.4f}**, Rank IC: **{best['rank_ic']:.4f}**\n"
+            f"- Precision@k: **{best['precision_at_k']:.4f}**, Sharpe: **{best['sharpe']:.3f}**\n"
+            f"- Average return (top-k): **{best['average_return']:.6f}**, Hit rate: **{best['hit_rate']:.3f}**\n"
+        )
+        (OUT_DIR / "strategy_interpretation.md").write_text(interp, encoding="utf-8")
+
     pd.DataFrame(
         [
             {
@@ -991,6 +1075,10 @@ def _report(
 
 Generated from `backend/data/processed` with **walk-forward expanding CV**, **purged k-fold + embargo**,
 **holdout test**, **transaction costs**, **Diebold–Mariano** on daily losses.
+
+## Main task (single source of truth)
+- Primary objective: **cross-sectional stock ranking for portfolio selection**.
+- Classifiers are used as score generators; ranking/trading metrics are primary, AUC/F1 are secondary diagnostics.
 
 See **`notebooks/LITERATURE_REVIEW.md`** for paper references (XGB/LightGBM/FinBERT/Optuna + validation/statistics).
 See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.

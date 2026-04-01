@@ -3,6 +3,10 @@
 Generated from `backend/data/processed` with **walk-forward expanding CV**, **purged k-fold + embargo**,
 **holdout test**, **transaction costs**, **Diebold–Mariano** on daily losses.
 
+## Main task (single source of truth)
+- Primary objective: **cross-sectional stock ranking for portfolio selection**.
+- Classifiers are used as score generators; ranking/trading metrics are primary, AUC/F1 are secondary diagnostics.
+
 See **`notebooks/LITERATURE_REVIEW.md`** for paper references (XGB/LightGBM/FinBERT/Optuna + validation/statistics).
 See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 
@@ -13,24 +17,24 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 ## Label distribution (next-day up), by time split
 | split | n | n_positive | n_negative | frac_positive |
 | --- | --- | --- | --- | --- |
-| train | 12780 | 6404 | 6376 | 0.5011 |
-| validation | 2740 | 1382 | 1358 | 0.5044 |
-| test | 2740 | 1395 | 1345 | 0.5091 |
+| train | 13450 | 5154 | 8296 | 0.3832 |
+| validation | 2880 | 1138 | 1742 | 0.3951 |
+| test | 2590 | 1010 | 1580 | 0.3900 |
 
 ## Validation & leakage control
-- Target: `target_up_1d` = (next-day return > 0); features at `t` do not use future prices beyond the
+- Target: `target_up_5d` = (next-day return > 0); features at `t` do not use future prices beyond the
   engineered pipeline.
 - Walk-forward expanding splits and purged k-fold reduce overlap between train and test in time.
-- Threshold for strategy (`p >= 0.45`) chosen on **validation** only, **not** on holdout.
+- Threshold for strategy (`p >= 0.60`) chosen on **validation** only, **not** on holdout.
 
 ## Holdout metrics (best row by ROC-AUC)
-- **logreg_pca**: roc_auc=0.4844, f1=0.4634
+- **lightgbm_optuna**: roc_auc=0.5192, pr_auc=0.4258, brier=0.2506, f1=0.4418
 
 ## Cross-validation (mean ROC-AUC across folds)
-- Walk-forward: **0.5015**
-- Purged k-fold: **0.4981**
-- Purged k-fold + horizon: **0.4966**
-- CPCV (combinatorial purged, full features): **0.5003**
+- Walk-forward: **0.5066**
+- Purged k-fold: **0.5058**
+- Purged k-fold + horizon: **0.5064**
+- CPCV (combinatorial purged, full features): **0.5088**
 
 ## Ablations (feature groups)
 - `tech_only`: 21 features
@@ -38,25 +42,26 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - `full`: 31 features
 
 ## Backtest (holdout, equal-weight, costs 2.0 bps per side on turnover)
-- Strategy equity (net): **1.126** vs buy-and-hold **1.184**
-- Meta-gated strategy equity (net): **4.719**
-- Relative uplift vs B&H: **-4.96%**
-- Net Sharpe (ann.): **1.449**
-- Meta Net Sharpe (ann.): **31.827**
-- Max DD (net): **-0.0387**
+- Strategy equity (net): **0.987** vs buy-and-hold **3.672**
+- Meta-gated strategy equity (net): **1.020**
+- Relative uplift vs B&H: **-73.12%**
+- Net Sharpe (ann.): **-0.553**
+- Meta Net Sharpe (ann.): **3.202**
+- Max DD (net): **-0.0266**
 
 ## Diebold–Mariano (strategy vs benchmark log-loss)
-- DM stat: **0.2282**
-- p-value (two-sided): **8.1945e-01**
-- Meta DM stat: **2.4555**
-- Meta p-value (two-sided): **1.4070e-02**
+- DM stat: **2.1761**
+- p-value (two-sided): **2.9551e-02**
+- Meta DM stat: **8.6400**
+- Meta p-value (two-sided): **5.6216e-18**
 
 ## SPA-lite (block bootstrap on daily excess vs buy&hold)
-- Observed mean excess: **-0.000186**
-- One-sided p-value (H1: mean > 0): **0.5040**
+- Observed mean excess: **-0.009250**
+- One-sided p-value (H1: mean > 0): **0.5370**
 
 ## Interpretation (auto-generated checklist)
 - If **holdout ROC-AUC ≈ 0.5** and CV means are near 0.5, treat directional signal as **not demonstrated** on this panel; focus on pipeline sanity, not live trading.
+- **Brier** scores probability calibration (lower is better; random coin ≈ 0.25 for balanced binary). **PR-AUC** highlights precision–recall tradeoff when classes are skewed or costs asymmetric.
 - Use **DM p-values** as a sanity check on forecast loss vs naive 0.5; they do not guarantee economic value after costs.
 - **SPA-lite** is a coarse block-bootstrap on mean excess; it is **not** full Hansen (2005) SPA across many models — see literature notes.
 - Compare **net** backtest curves to gross when costs matter; meta-gated curve is exploratory (OOF primary + meta on train/val).
