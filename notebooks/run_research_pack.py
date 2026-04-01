@@ -27,7 +27,6 @@ from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
     f1_score,
-    roc_auc_score,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -155,7 +154,6 @@ def _metrics(
     out: dict[str, float] = {
         "accuracy": float(accuracy_score(y_true, pred)),
         "f1": float(f1_score(y_true, pred)),
-        "roc_auc": float(roc_auc_score(y_true, proba)),
     }
     try:
         out["brier"] = float(brier_score_loss(y_true, proba))
@@ -203,6 +201,8 @@ def _fit_rf(
         rf.fit(x_tr, y_train)
         return rf, imputer
 
+    # ROC-AUC is intentionally not used as the optimization target:
+    # this project is cross-sectional ranking, so IC/Rank IC are primary.
     def objective(trial: optuna.Trial) -> float:
         params = {
             "n_estimators": trial.suggest_int("n_estimators", 80, 320),
@@ -217,7 +217,10 @@ def _fit_rf(
         model = RandomForestClassifier(**params, class_weight="balanced")
         model.fit(x_tr, y_train)
         proba = model.predict_proba(x_va)[:, 1]
-        return float(roc_auc_score(y_val, proba))
+        if y_val is None or x_val is None:
+            return 0.0
+        rank = precision_recall_at_k(y_val, proba, k=max(1, int(len(y_val) * 0.2)))
+        return float(rank["precision_at_k"])
 
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=trials, show_progress_bar=False)
@@ -251,12 +254,17 @@ def _cv_metrics(
         rf, imp = _fit_rf(x_tr, y_tr, None, None, trials=0)
         x_te_t = imp.transform(x_te)
         proba = rf.predict_proba(x_te_t)[:, 1]
+        scored = d.loc[m_te, ["date", "ticker", "ret_1d"]].copy()
+        scored = scored.rename(columns={"ret_1d": "forward_return"})
+        scored["score"] = proba
+        rank_eval, _ = _strategy_rank_eval(scored, y_true=y_te, top_frac=0.2)
         out.append(
             {
                 "split_name": name,
                 "fold": fold,
-                "roc_auc": float(roc_auc_score(y_te, proba)),
-                "f1": float(f1_score(y_te, (proba >= 0.5).astype(int))),
+                "precision_at_k": float(rank_eval.get("precision_at_k", np.nan)),
+                "ic": float(rank_eval.get("ic", np.nan)),
+                "rank_ic": float(rank_eval.get("rank_ic", np.nan)),
             }
         )
     return out
@@ -461,6 +469,67 @@ def _strategy_rank_eval(
     return out, pd.DataFrame(debug_rows)
 
 
+def _quantile_cumulative_returns(
+    scored: pd.DataFrame,
+    *,
+    score_col: str = "score",
+    return_col: str = "forward_return",
+    n_quantiles: int = 5,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Per-date cross-sectional quantile returns and cumulative curves.
+
+    Quantiles are assigned within each date (not globally).
+    Q1 is the lowest-score bucket, Q{n} is the highest-score bucket.
+    """
+    if n_quantiles < 2:
+        raise ValueError("n_quantiles must be >= 2")
+    s = scored[["date", score_col, return_col]].copy()
+    s = s.dropna(subset=["date", score_col, return_col]).copy()
+    if s.empty:
+        empty = pd.DataFrame(columns=["date", "quantile", "mean_return"])
+        return empty, pd.DataFrame(columns=["date"])
+
+    s["date"] = pd.to_datetime(s["date"], errors="coerce")
+    s = s.dropna(subset=["date"]).copy()
+    if s.empty:
+        empty = pd.DataFrame(columns=["date", "quantile", "mean_return"])
+        return empty, pd.DataFrame(columns=["date"])
+
+    q_rows: list[pd.DataFrame] = []
+    for dt, g in s.groupby("date", sort=True):
+        n_assets = len(g)
+        if n_assets < 2:
+            continue
+        q_used = int(min(n_quantiles, n_assets))
+        # Rank-based binning is stable for ties and small cross-sections.
+        rank_pct = g[score_col].rank(method="first", pct=True)
+        q = np.ceil(rank_pct * q_used).astype(int).clip(1, q_used)
+        tmp = pd.DataFrame(
+            {
+                "date": dt,
+                "quantile": q,
+                "mean_return": g[return_col].values,
+            }
+        )
+        q_rows.append(tmp.groupby(["date", "quantile"], as_index=False)["mean_return"].mean())
+
+    if not q_rows:
+        empty = pd.DataFrame(columns=["date", "quantile", "mean_return"])
+        return empty, pd.DataFrame(columns=["date"])
+
+    daily = pd.concat(q_rows, ignore_index=True).sort_values(["date", "quantile"])
+    pivot = (
+        daily.pivot(index="date", columns="quantile", values="mean_return")
+        .sort_index()
+        .fillna(0.0)
+    )
+    cum = (1.0 + pivot).cumprod()
+    cum.columns = [f"Q{int(c)}" for c in cum.columns]
+    cum = cum.reset_index()
+    return daily, cum
+
+
 def _diebold_on_test(
     df_test: pd.DataFrame,
     *,
@@ -611,6 +680,9 @@ def run_pipeline(
     x_tr_imp = imputer.transform(x_tr)
     x_va_imp = imputer.transform(x_va)
 
+    eval_val = d.loc[m_va, ["date", "ticker", "ret_1d"]].copy()
+    eval_val = eval_val.rename(columns={"ret_1d": "forward_return"})
+
     def _xgb_objective(trial: optuna.Trial) -> float:
         clf = XGBClassifier(
             n_estimators=trial.suggest_int("n_estimators", 100, 500),
@@ -627,7 +699,10 @@ def run_pipeline(
         )
         clf.fit(x_tr_imp, y_tr)
         p = clf.predict_proba(x_va_imp)[:, 1]
-        return float(roc_auc_score(y_va, p))
+        ef = eval_val.copy()
+        ef["score"] = p
+        rank_eval, _ = _strategy_rank_eval(ef, y_true=y_va, top_frac=0.2)
+        return float(rank_eval.get("rank_ic", np.nan))
 
     xgb_study = optuna.create_study(direction="maximize")
     xgb_study.optimize(_xgb_objective, n_trials=optuna_trials or 30, show_progress_bar=False)
@@ -654,7 +729,10 @@ def run_pipeline(
         )
         clf.fit(x_tr_imp, y_tr)
         p = clf.predict_proba(x_va_imp)[:, 1]
-        return float(roc_auc_score(y_va, p))
+        ef = eval_val.copy()
+        ef["score"] = p
+        rank_eval, _ = _strategy_rank_eval(ef, y_true=y_va, top_frac=0.2)
+        return float(rank_eval.get("rank_ic", np.nan))
 
     lgbm_study = optuna.create_study(direction="maximize")
     lgbm_study.optimize(_lgbm_objective, n_trials=optuna_trials or 30, show_progress_bar=False)
@@ -681,7 +759,7 @@ def run_pipeline(
         for row in rel:
             reliability_rows.append({"model": model_name, **row})
         metrics_rows.append({"model": model_name, **m})
-    metrics_df = pd.DataFrame(metrics_rows).sort_values("roc_auc", ascending=False)
+    metrics_df = pd.DataFrame(metrics_rows).sort_values("rank_ic_mean", ascending=False)
     metrics_df.to_csv(OUT_DIR / "model_metrics.csv", index=False)
     pd.DataFrame(reliability_rows).to_csv(OUT_DIR / "reliability_curve.csv", index=False)
 
@@ -692,18 +770,23 @@ def run_pipeline(
     test_out["proba_xgb"] = proba_xgb_te
     test_out["proba_lgbm"] = proba_lgbm_te
 
-    # Use best model (by val AUC) for backtesting
-    _val_aucs = {
-        "proba_rf": float(roc_auc_score(y_va, rf.predict_proba(x_va_imp)[:, 1])),
-        "proba_xgb": float(xgb_study.best_value),
-        "proba_lgbm": float(lgbm_study.best_value),
-    }
-    _best_proba_col = max(_val_aucs, key=_val_aucs.__getitem__)
+    # Select best model by ranking quality on validation (Rank IC).
+    _val_rank_scores: dict[str, float] = {}
+    for _col, _p in {
+        "proba_rf": rf.predict_proba(x_va_imp)[:, 1],
+        "proba_xgb": best_xgb.predict_proba(x_va_imp)[:, 1],
+        "proba_lgbm": best_lgbm.predict_proba(x_va_imp)[:, 1],
+    }.items():
+        _ef = eval_val.copy()
+        _ef["score"] = _p
+        _re, _ = _strategy_rank_eval(_ef, y_true=y_va, top_frac=0.2)
+        _val_rank_scores[_col] = float(_re.get("rank_ic", np.nan))
+    _best_proba_col = max(_val_rank_scores, key=_val_rank_scores.__getitem__)
 
     fi = pd.Series(rf.feature_importances_, index=full_feats).sort_values(ascending=False)
     fi.head(20).rename("importance").to_csv(OUT_DIR / "feature_importance_top20.csv")
 
-    # Threshold on validation (best model by val AUC)
+    # Threshold on validation (best model by rank-based criterion)
     _best_va_proba = {
         "proba_rf": rf.predict_proba(x_va_imp)[:, 1],
         "proba_xgb": best_xgb.predict_proba(x_va_imp)[:, 1],
@@ -831,22 +914,23 @@ def run_pipeline(
     pd.DataFrame([stats_topk]).to_csv(OUT_DIR / "backtest_topk_stats.csv", index=False)
 
     # Aggregated model comparison dashboard.
-    baseline_auc = float(metrics_df.loc[metrics_df["model"] == "logreg_baseline", "roc_auc"].iloc[0])
+    baseline_rank_ic = float(
+        metrics_df.loc[metrics_df["model"] == "logreg_baseline", "rank_ic_mean"].iloc[0]
+    )
     dashboard = metrics_df[
         [
             "model",
-            "roc_auc",
             "ic_mean",
             "rank_ic_mean",
+            "precision_at_k",
             "long_short_spread",
             "top_quantile_return",
         ]
     ].copy()
-    dashboard["mean_auc"] = dashboard["roc_auc"]
     dashboard["mean_ic"] = dashboard["ic_mean"]
     dashboard["average_return"] = dashboard["top_quantile_return"]
-    dashboard["beats_baseline_auc"] = (dashboard["roc_auc"] > baseline_auc).astype(int)
-    dashboard["beat_baseline_pct"] = dashboard["beats_baseline_auc"] * 100.0
+    dashboard["beats_baseline_rank_ic"] = (dashboard["rank_ic_mean"] > baseline_rank_ic).astype(int)
+    dashboard["beat_baseline_pct"] = dashboard["beats_baseline_rank_ic"] * 100.0
     best_col_to_model = {
         "proba_rf": "random_forest_optuna",
         "proba_xgb": "xgboost_optuna",
@@ -888,15 +972,43 @@ def run_pipeline(
         strategy_rows.append(
             {
                 "strategy": strategy,
-                "auc": float(roc_auc_score(y_te_s, proba_s)),
                 **rank_eval,
             }
         )
     strategy_df = pd.DataFrame(strategy_rows).sort_values("sharpe", ascending=False)
-    strategy_df.to_csv(OUT_DIR / "strategy_comparison.csv", index=False)
+    # Thesis-facing CSV: rank/portfolio metrics only (no ROC-AUC).
+    strategy_df[
+        ["strategy", "ic", "precision_at_k", "sharpe", "average_return", "hit_rate"]
+    ].to_csv(OUT_DIR / "strategy_comparison.csv", index=False)
     if strategy_debug_frames:
         strategy_debug = pd.concat(strategy_debug_frames, ignore_index=True)
         strategy_debug.to_csv(OUT_DIR / "strategy_selection_debug.csv", index=False)
+
+    # Thesis plot: cumulative returns by per-date prediction quantiles (best test score column).
+    quant_scored = test_out[["date", "ticker", "ret_1d", _best_proba_col]].rename(
+        columns={"ret_1d": "forward_return", _best_proba_col: "score"}
+    )
+    q_daily, q_cum = _quantile_cumulative_returns(
+        quant_scored,
+        score_col="score",
+        return_col="forward_return",
+        n_quantiles=5,
+    )
+    q_daily.to_csv(OUT_DIR / "quantile_daily_returns.csv", index=False)
+    q_cum.to_csv(OUT_DIR / "quantile_cumulative_returns.csv", index=False)
+    if not q_cum.empty:
+        plt.figure(figsize=(12, 7))
+        q_cols = [c for c in q_cum.columns if c.startswith("Q")]
+        q_cols = sorted(q_cols, key=lambda x: int(x[1:]))
+        for qc in q_cols:
+            plt.plot(q_cum["date"], q_cum[qc], linewidth=1.7, label=qc)
+        plt.title("Cumulative Returns by Prediction Quantiles")
+        plt.xlabel("Date")
+        plt.ylabel("Cumulative Return")
+        plt.legend(title="Quantile", ncols=2)
+        plt.tight_layout()
+        plt.savefig(OUT_DIR / "cumulative_returns_by_quantile.png", dpi=170)
+        plt.close()
     if not strategy_df.empty:
         best = strategy_df.iloc[0]
         interp = (
@@ -904,45 +1016,45 @@ def run_pipeline(
             f"- Best strategy: **{best['strategy']}**\n"
             f"- IC: **{best['ic']:.4f}**, Rank IC: **{best['rank_ic']:.4f}**\n"
             f"- Precision@k: **{best['precision_at_k']:.4f}**, Sharpe: **{best['sharpe']:.3f}**\n"
-            f"- Average return (top-k): **{best['average_return']:.6f}**, Hit rate: **{best['hit_rate']:.3f}**\n"
+            f"- Average return (top-fraction): **{best['average_return']:.6f}**, Hit rate: **{best['hit_rate']:.3f}**\n"
         )
         (OUT_DIR / "strategy_interpretation.md").write_text(interp, encoding="utf-8")
 
     pd.DataFrame(
         [
             {
-                "name": "walk_forward_mean_auc",
-                "value": cv_df[cv_df["split_name"] == "walk_forward"]["roc_auc"].mean(),
+                "name": "walk_forward_mean_rank_ic",
+                "value": cv_df[cv_df["split_name"] == "walk_forward"]["rank_ic"].mean(),
             },
             {
-                "name": "walk_forward_std_auc",
-                "value": cv_df[cv_df["split_name"] == "walk_forward"]["roc_auc"].std(ddof=1),
+                "name": "walk_forward_std_rank_ic",
+                "value": cv_df[cv_df["split_name"] == "walk_forward"]["rank_ic"].std(ddof=1),
             },
             {
-                "name": "purged_kfold_mean_auc",
-                "value": cv_df[cv_df["split_name"] == "purged_kfold"]["roc_auc"].mean(),
+                "name": "purged_kfold_mean_rank_ic",
+                "value": cv_df[cv_df["split_name"] == "purged_kfold"]["rank_ic"].mean(),
             },
             {
-                "name": "purged_kfold_std_auc",
-                "value": cv_df[cv_df["split_name"] == "purged_kfold"]["roc_auc"].std(ddof=1),
+                "name": "purged_kfold_std_rank_ic",
+                "value": cv_df[cv_df["split_name"] == "purged_kfold"]["rank_ic"].std(ddof=1),
             },
             {
-                "name": "purged_kfold_horizon_mean_auc",
-                "value": cv_df[cv_df["split_name"] == "purged_kfold_horizon"]["roc_auc"].mean(),
+                "name": "purged_kfold_horizon_mean_rank_ic",
+                "value": cv_df[cv_df["split_name"] == "purged_kfold_horizon"]["rank_ic"].mean(),
             },
             {
-                "name": "purged_kfold_horizon_std_auc",
-                "value": cv_df[cv_df["split_name"] == "purged_kfold_horizon"]["roc_auc"].std(ddof=1),
+                "name": "purged_kfold_horizon_std_rank_ic",
+                "value": cv_df[cv_df["split_name"] == "purged_kfold_horizon"]["rank_ic"].std(ddof=1),
             },
             {
-                "name": "cpcv_mean_auc",
-                "value": cv_df[cv_df["split_name"] == "cpcv"]["roc_auc"].mean()
+                "name": "cpcv_mean_rank_ic",
+                "value": cv_df[cv_df["split_name"] == "cpcv"]["rank_ic"].mean()
                 if not cv_df.empty and (cv_df["split_name"] == "cpcv").any()
                 else float("nan"),
             },
             {
-                "name": "cpcv_std_auc",
-                "value": cv_df[cv_df["split_name"] == "cpcv"]["roc_auc"].std(ddof=1)
+                "name": "cpcv_std_rank_ic",
+                "value": cv_df[cv_df["split_name"] == "cpcv"]["rank_ic"].std(ddof=1)
                 if not cv_df.empty and (cv_df["split_name"] == "cpcv").any()
                 else float("nan"),
             },
@@ -1011,7 +1123,7 @@ def _plots(
         y="value",
         hue="metric",
     )
-    plt.title("Holdout Model Comparison: Accuracy / F1 / ROC-AUC")
+    plt.title("Holdout Model Comparison: Ranking & Financial Metrics")
     plt.ylabel("Score")
     plt.xticks(rotation=12)
     plt.tight_layout()
@@ -1022,9 +1134,9 @@ def _plots(
         td = trials_df.dropna(subset=["value"]).sort_values("number")
         plt.figure(figsize=(12, 6))
         sns.lineplot(data=td, x="number", y="value", marker="o")
-        plt.title("Optuna Trial Progress (Validation ROC-AUC)")
+        plt.title("Optuna Trial Progress (Validation Rank IC)")
         plt.xlabel("Trial")
-        plt.ylabel("ROC-AUC")
+        plt.ylabel("Rank IC")
         plt.tight_layout()
         plt.savefig(OUT_DIR / "04_optuna_progress.png", dpi=160)
         plt.close()
@@ -1051,15 +1163,15 @@ def _plots(
 
     if not cv_df.empty:
         plt.figure(figsize=(12, 6))
-        sns.lineplot(data=cv_df, x="fold", y="roc_auc", hue="ablation", style="split_name", markers=True)
-        plt.title("CV ROC-AUC by fold (ablations)")
+        sns.lineplot(data=cv_df, x="fold", y="rank_ic", hue="ablation", style="split_name", markers=True)
+        plt.title("CV Rank IC by fold (ablations)")
         plt.tight_layout()
         plt.savefig(OUT_DIR / "07_cv_folds.png", dpi=160)
         plt.close()
 
         plt.figure(figsize=(10, 6))
-        sns.barplot(data=cv_df, x="ablation", y="roc_auc", hue="split_name")
-        plt.title("Mean CV quality by ablation")
+        sns.barplot(data=cv_df, x="ablation", y="rank_ic", hue="split_name")
+        plt.title("Mean CV Rank IC by ablation")
         plt.xticks(rotation=15)
         plt.tight_layout()
         plt.savefig(OUT_DIR / "08_ablation_cv.png", dpi=160)
@@ -1081,29 +1193,29 @@ def _report(
     spa: dict[str, float],
     label_dist: pd.DataFrame,
 ) -> None:
-    winner = metrics_df.iloc[0]
+    winner = metrics_df.sort_values("rank_ic_mean", ascending=False).iloc[0]
     final_bh = float(backtest["buy_hold_equally_weighted"].iloc[-1])
     final_net = float(backtest["strategy_curve_net"].iloc[-1])
     final_meta = float(backtest_meta["strategy_curve_net"].iloc[-1])
     uplift = (final_net / final_bh - 1.0) * 100.0 if final_bh > 0 else np.nan
 
     wf_mean = (
-        cv_df[cv_df["split_name"] == "walk_forward"]["roc_auc"].mean()
+        cv_df[cv_df["split_name"] == "walk_forward"]["rank_ic"].mean()
         if not cv_df.empty
         else float("nan")
     )
     pk_mean = (
-        cv_df[cv_df["split_name"] == "purged_kfold"]["roc_auc"].mean()
+        cv_df[cv_df["split_name"] == "purged_kfold"]["rank_ic"].mean()
         if not cv_df.empty
         else float("nan")
     )
     pkh_mean = (
-        cv_df[cv_df["split_name"] == "purged_kfold_horizon"]["roc_auc"].mean()
+        cv_df[cv_df["split_name"] == "purged_kfold_horizon"]["rank_ic"].mean()
         if not cv_df.empty
         else float("nan")
     )
     cpcv_mean = (
-        cv_df[cv_df["split_name"] == "cpcv"]["roc_auc"].mean()
+        cv_df[cv_df["split_name"] == "cpcv"]["rank_ic"].mean()
         if not cv_df.empty and (cv_df["split_name"] == "cpcv").any()
         else float("nan")
     )
@@ -1117,7 +1229,8 @@ Generated from `backend/data/processed` with **walk-forward expanding CV**, **pu
 
 ## Main task (single source of truth)
 - Primary objective: **cross-sectional stock ranking for portfolio selection**.
-- Classifiers are used as score generators; ranking/trading metrics are primary, AUC/F1 are secondary diagnostics.
+- Classifiers are used as score generators; ranking/trading metrics are primary.
+- ROC-AUC is not used as a primary metric because the task is cross-sectional ranking rather than global classification.
 
 See **`notebooks/LITERATURE_REVIEW.md`** for paper references (XGB/LightGBM/FinBERT/Optuna + validation/statistics).
 See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
@@ -1135,10 +1248,10 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - Walk-forward expanding splits and purged k-fold reduce overlap between train and test in time.
 - Threshold for strategy (`p >= {threshold:.2f}`) chosen on **validation** only, **not** on holdout.
 
-## Holdout metrics (best row by ROC-AUC)
-- **{winner["model"]}**: roc_auc={winner["roc_auc"]:.4f}, pr_auc={winner.get("pr_auc", float("nan")):.4f}, brier={winner.get("brier", float("nan")):.4f}, f1={winner["f1"]:.4f}
+## Holdout ranking/financial metrics (best row by Rank IC)
+- **{winner["model"]}**: ic={winner.get("ic_mean", float("nan")):.4f}, rank_ic={winner.get("rank_ic_mean", float("nan")):.4f}, precision@k={winner.get("precision_at_k", float("nan")):.4f}, long_short_spread={winner.get("long_short_spread", float("nan")):.6f}
 
-## Cross-validation (mean ROC-AUC across folds)
+## Cross-validation (mean Rank IC across folds)
 - Walk-forward: **{wf_mean:.4f}**
 - Purged k-fold: **{pk_mean:.4f}**
 - Purged k-fold + horizon: **{pkh_mean:.4f}**
@@ -1168,8 +1281,8 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - One-sided p-value (H1: mean > 0): **{spa.get("p_value_one_sided", float("nan")):.4f}**
 
 ## Interpretation (auto-generated checklist)
-- If **holdout ROC-AUC ≈ 0.5** and CV means are near 0.5, treat directional signal as **not demonstrated** on this panel; focus on pipeline sanity, not live trading.
-- **Brier** scores probability calibration (lower is better; random coin ≈ 0.25 for balanced binary). **PR-AUC** highlights precision–recall tradeoff when classes are skewed or costs asymmetric.
+- If **Rank IC** and **IC** are near zero and quantile spreads are weak, treat ranking signal as **not demonstrated** on this panel; focus on pipeline sanity, not live trading.
+- Use **precision@k**, **quantile spread**, and **Sharpe/hit-rate** together; no single ranking metric is sufficient on noisy financial panels.
 - Use **DM p-values** as a sanity check on forecast loss vs naive 0.5; they do not guarantee economic value after costs.
 - **SPA-lite** is a coarse block-bootstrap on mean excess; it is **not** full Hansen (2005) SPA across many models — see literature notes.
 - Compare **net** backtest curves to gross when costs matter; meta-gated curve is exploratory (OOF primary + meta on train/val).

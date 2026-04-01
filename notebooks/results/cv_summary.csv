@@ -1,9 +1,9 @@
 name,value
-walk_forward_mean_auc,0.5066021028257978
-walk_forward_std_auc,0.019846721618733902
-purged_kfold_mean_auc,0.505769842625905
-purged_kfold_std_auc,0.02025743081673525
-purged_kfold_horizon_mean_auc,0.506356469138775
-purged_kfold_horizon_std_auc,0.020059496318309413
-cpcv_mean_auc,0.508820756060201
-cpcv_std_auc,0.01354810676221949
+walk_forward_mean_rank_ic,-0.08149101266998994
+walk_forward_std_rank_ic,0.05787975021815425
+purged_kfold_mean_rank_ic,-0.0836915953577223
+purged_kfold_std_rank_ic,0.05481652965381425
+purged_kfold_horizon_mean_rank_ic,-0.07694920363111749
+purged_kfold_horizon_std_rank_ic,0.05189561641671485
+cpcv_mean_rank_ic,-0.0820264667240137
+cpcv_std_rank_ic,0.03682303485609172

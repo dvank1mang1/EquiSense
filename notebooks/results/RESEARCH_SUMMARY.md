@@ -5,7 +5,8 @@ Generated from `backend/data/processed` with **walk-forward expanding CV**, **pu
 
 ## Main task (single source of truth)
 - Primary objective: **cross-sectional stock ranking for portfolio selection**.
-- Classifiers are used as score generators; ranking/trading metrics are primary, AUC/F1 are secondary diagnostics.
+- Classifiers are used as score generators; ranking/trading metrics are primary.
+- ROC-AUC is not used as a primary metric because the task is cross-sectional ranking rather than global classification.
 
 See **`notebooks/LITERATURE_REVIEW.md`** for paper references (XGB/LightGBM/FinBERT/Optuna + validation/statistics).
 See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
@@ -27,14 +28,14 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - Walk-forward expanding splits and purged k-fold reduce overlap between train and test in time.
 - Threshold for strategy (`p >= 0.60`) chosen on **validation** only, **not** on holdout.
 
-## Holdout metrics (best row by ROC-AUC)
-- **random_forest_optuna**: roc_auc=0.5063, pr_auc=0.4090, brier=0.2508, f1=0.3950
+## Holdout ranking/financial metrics (best row by Rank IC)
+- **random_forest_optuna**: ic=-0.0307, rank_ic=-0.0245, precision@k=0.4019, long_short_spread=0.005091
 
-## Cross-validation (mean ROC-AUC across folds)
-- Walk-forward: **0.5066**
-- Purged k-fold: **0.5058**
-- Purged k-fold + horizon: **0.5064**
-- CPCV (combinatorial purged, full features): **0.5088**
+## Cross-validation (mean Rank IC across folds)
+- Walk-forward: **-0.0815**
+- Purged k-fold: **-0.0837**
+- Purged k-fold + horizon: **-0.0769**
+- CPCV (combinatorial purged, full features): **-0.0820**
 
 ## Ablations (feature groups)
 - `tech_only`: 21 features
@@ -42,26 +43,26 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - `full`: 31 features
 
 ## Backtest (holdout, equal-weight, costs 2.0 bps per side on turnover)
-- Strategy equity (net): **0.982** vs buy-and-hold **3.672**
-- Meta-gated strategy equity (net): **1.017**
-- Relative uplift vs B&H: **-73.26%**
-- Net Sharpe (ann.): **-0.628**
-- Meta Net Sharpe (ann.): **2.377**
-- Max DD (net): **-0.0256**
+- Strategy equity (net): **1.001** vs buy-and-hold **3.672**
+- Meta-gated strategy equity (net): **1.027**
+- Relative uplift vs B&H: **-72.75%**
+- Net Sharpe (ann.): **0.040**
+- Meta Net Sharpe (ann.): **3.544**
+- Max DD (net): **-0.0226**
 
 ## Diebold–Mariano (strategy vs benchmark log-loss)
-- DM stat: **0.6172**
-- p-value (two-sided): **5.3713e-01**
-- Meta DM stat: **8.8939**
-- Meta p-value (two-sided): **5.8978e-19**
+- DM stat: **2.2617**
+- p-value (two-sided): **2.3718e-02**
+- Meta DM stat: **8.3853**
+- Meta p-value (two-sided): **5.0608e-17**
 
 ## SPA-lite (block bootstrap on daily excess vs buy&hold)
-- Observed mean excess: **-0.009267**
-- One-sided p-value (H1: mean > 0): **0.5700**
+- Observed mean excess: **-0.009202**
+- One-sided p-value (H1: mean > 0): **0.5600**
 
 ## Interpretation (auto-generated checklist)
-- If **holdout ROC-AUC ≈ 0.5** and CV means are near 0.5, treat directional signal as **not demonstrated** on this panel; focus on pipeline sanity, not live trading.
-- **Brier** scores probability calibration (lower is better; random coin ≈ 0.25 for balanced binary). **PR-AUC** highlights precision–recall tradeoff when classes are skewed or costs asymmetric.
+- If **Rank IC** and **IC** are near zero and quantile spreads are weak, treat ranking signal as **not demonstrated** on this panel; focus on pipeline sanity, not live trading.
+- Use **precision@k**, **quantile spread**, and **Sharpe/hit-rate** together; no single ranking metric is sufficient on noisy financial panels.
 - Use **DM p-values** as a sanity check on forecast loss vs naive 0.5; they do not guarantee economic value after costs.
 - **SPA-lite** is a coarse block-bootstrap on mean excess; it is **not** full Hansen (2005) SPA across many models — see literature notes.
 - Compare **net** backtest curves to gross when costs matter; meta-gated curve is exploratory (OOF primary + meta on train/val).
