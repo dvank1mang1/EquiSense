@@ -56,7 +56,7 @@ class _FakeStore:
                 "news_count",
                 "positive_ratio",
                 "negative_ratio",
-                "sentiment_momentum",
+                "sentiment_std",
             ):
                 row[col] = 0.1
             rows.append(row)

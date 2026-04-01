@@ -20,7 +20,7 @@ def test_compute_empty_news_returns_zeros_aligned_to_dates() -> None:
         "news_count",
         "positive_ratio",
         "negative_ratio",
-        "sentiment_momentum",
+        "sentiment_std",
     ]
     assert (out["news_count"] == 0).all()
     assert (out["sentiment_score"] == 0.0).all()

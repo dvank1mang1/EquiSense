@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import numpy as np
@@ -153,7 +152,7 @@ class SentimentFeatureEngineer:
                     "news_count": np.zeros(n, dtype=int),
                     "positive_ratio": np.zeros(n, dtype=float),
                     "negative_ratio": np.zeros(n, dtype=float),
-                    "sentiment_momentum": np.zeros(n, dtype=float),
+                    "sentiment_std": np.zeros(n, dtype=float),
                 }
             )
 
@@ -177,7 +176,7 @@ class SentimentFeatureEngineer:
                     "news_count": np.zeros(n, dtype=int),
                     "positive_ratio": np.zeros(n, dtype=float),
                     "negative_ratio": np.zeros(n, dtype=float),
-                    "sentiment_momentum": np.zeros(n, dtype=float),
+                    "sentiment_std": np.zeros(n, dtype=float),
                 }
             )
 
@@ -212,18 +211,16 @@ class SentimentFeatureEngineer:
             pos_ratios.append(float((sub["label"] == "positive").mean()))
             neg_ratios.append(float((sub["label"] == "negative").mean()))
 
-        momentum: list[float] = []
-        for i, d in enumerate(dates_utc):
-            past = d - pd.Timedelta(days=window)
-            mask_p = (art_df["day"] >= past - pd.Timedelta(days=window - 1)) & (
-                art_df["day"] <= past
-            )
-            sub_p = art_df.loc[mask_p]
-            if len(sub_p) == 0:
-                momentum.append(0.0)
+        std_vals: list[float] = []
+        for d in dates_utc:
+            d_n = d
+            start = d_n - pd.Timedelta(days=window - 1)
+            mask = (art_df["day"] >= start) & (art_df["day"] <= d_n)
+            sub = art_df.loc[mask]
+            if len(sub) < 2:
+                std_vals.append(0.0)
             else:
-                prev_mean = float(sub_p["score"].mean())
-                momentum.append(float(scores[i] - prev_mean) if not math.isnan(scores[i]) else 0.0)
+                std_vals.append(float(sub["score"].std(ddof=1)))
 
         out_df = pd.DataFrame(
             {
@@ -232,7 +229,7 @@ class SentimentFeatureEngineer:
                 "news_count": counts,
                 "positive_ratio": pos_ratios,
                 "negative_ratio": neg_ratios,
-                "sentiment_momentum": momentum,
+                "sentiment_std": std_vals,
             }
         )
         return out_df.reset_index(drop=True)
