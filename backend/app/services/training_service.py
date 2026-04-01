@@ -420,7 +420,9 @@ class TrainingService:
             "min_f1_delta": settings.auto_promotion_min_f1_delta,
             "candidate_brier": c_brier,
             "champion_brier": p_brier,
-            "brier_increase": (c_brier - p_brier) if c_brier is not None and p_brier is not None else None,
+            "brier_increase": (c_brier - p_brier)
+            if c_brier is not None and p_brier is not None
+            else None,
             "max_brier_increase": settings.auto_promotion_max_brier_increase,
         }
         if (c_roc - p_roc) < settings.auto_promotion_min_roc_auc_delta:

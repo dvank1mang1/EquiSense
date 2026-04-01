@@ -133,4 +133,3 @@ def test_backtest_job_run_validates_model_enum() -> None:
             json={"model": "bad_model_id"},
         )
         assert r.status_code == 422
-

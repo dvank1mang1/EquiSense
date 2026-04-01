@@ -102,13 +102,13 @@ class ShapExplainer:
                     and isinstance(rest, Pipeline)
                     and "scaler" in rest.named_steps
                 ):
-                    return rest.named_steps["scaler"].transform(xi)
-                return xi
+                    return rest.named_steps["scaler"].transform(xi)  # type: ignore[no-any-return]
+                return xi  # type: ignore[no-any-return]
             if isinstance(model, Pipeline) and _is_linear_model(_extract_inner_model(model)):
-                return model.named_steps["scaler"].transform(feat_df)
+                return model.named_steps["scaler"].transform(feat_df)  # type: ignore[no-any-return]
         except Exception:
             pass
-        return feat_df.values
+        return feat_df.values  # type: ignore[no-any-return]
 
     def _build_explainer(self, X_background: pd.DataFrame) -> None:
         import shap
@@ -180,7 +180,7 @@ class ShapExplainer:
         if self._explainer is None:
             return 0.0
         ev = getattr(self._explainer, "expected_value", 0.0)
-        if isinstance(ev, (list, np.ndarray)):
+        if isinstance(ev, list | np.ndarray):
             arr = np.asarray(ev).flatten()
             return float(arr[1]) if len(arr) > 1 else float(arr[0])
         return float(ev)

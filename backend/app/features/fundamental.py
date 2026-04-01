@@ -8,7 +8,7 @@ import pandas as pd
 def _parse_float(raw: Any) -> float | None:
     if raw is None:
         return None
-    if isinstance(raw, (int, float)):
+    if isinstance(raw, int | float):
         if isinstance(raw, float) and (math.isnan(raw) or math.isinf(raw)):
             return None
         return float(raw)

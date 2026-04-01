@@ -109,7 +109,7 @@ def mask_for_dates(df_dates: np.ndarray, allowed: np.ndarray) -> np.ndarray:
     """Boolean mask: row i included iff df_dates[i] is in allowed set."""
     d = pd.to_datetime(pd.Series(np.asarray(df_dates)), utc=False).dt.normalize()
     a = pd.to_datetime(pd.Series(np.asarray(allowed)), utc=False).dt.normalize()
-    return d.isin(a).to_numpy(dtype=bool)
+    return d.isin(a).to_numpy(dtype=bool)  # type: ignore[no-any-return]
 
 
 def _block_index_ranges(n: int, n_groups: int) -> list[tuple[int, int]]:

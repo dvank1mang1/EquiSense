@@ -93,4 +93,3 @@ class BacktestStore:
             metrics=metrics,
             equity_curve=curve,
         )
-

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.domain.identifiers import ModelId
 
+
 class BacktestRequest(BaseModel):
     ticker: str
     model: str = "model_d"

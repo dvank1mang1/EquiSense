@@ -16,8 +16,8 @@ from app.schemas.backtest import (
     BacktestCompareResponse,
     BacktestJobPayload,
     BacktestMetrics,
-    BacktestRunJobBody,
     BacktestResponse,
+    BacktestRunJobBody,
 )
 from app.schemas.common import ErrorResponse
 from app.services.backtesting_service import BacktestingService

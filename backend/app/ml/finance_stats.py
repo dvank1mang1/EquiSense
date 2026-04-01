@@ -103,4 +103,4 @@ def net_returns_with_transaction_costs(
     # Start from flat position at t0, so entering a position incurs cost.
     dp = np.diff(p, prepend=0.0)
     cost = np.abs(dp) * cost_per_turn
-    return g - cost
+    return g - cost  # type: ignore[no-any-return]

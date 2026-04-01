@@ -66,7 +66,7 @@ class ShapService:
 
         combined, last_row = await asyncio.to_thread(_build_data)
 
-        def _compute_shap() -> tuple[dict[str, float], float]:
+        def _compute_shap() -> tuple[dict[str, float], float, ShapExplainer]:
             explainer = ShapExplainer(instance)
             explainer._build_explainer(combined)
             shap_vals = explainer.explain_single(last_row)

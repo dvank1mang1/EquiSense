@@ -38,12 +38,12 @@ def block_bootstrap_mean_pvalue(
     starts = rng.integers(0, n, size=(n_bootstrap, n_blocks))
     counts = np.zeros(n_bootstrap, dtype=float)
     for b in range(n_bootstrap):
-        samp: list[float] = []
+        samp_list: list[float] = []
         for j in range(n_blocks):
             s = starts[b, j]
             chunk = [x[(s + k) % n] for k in range(block_len)]
-            samp.extend(chunk)
-        samp = np.array(samp[:n], dtype=float)
+            samp_list.extend(chunk)
+        samp = np.array(samp_list[:n], dtype=float)
         counts[b] = float(np.mean(samp))
 
     p_one = float(np.mean(counts >= obs))

@@ -54,7 +54,7 @@ class NewsDataClient:
         out: list[dict] = []
         for item in raw[:limit]:
             ts = item.get("datetime")
-            if isinstance(ts, (int, float)):
+            if isinstance(ts, int | float):
                 from datetime import datetime
 
                 published = datetime.fromtimestamp(ts, tz=UTC).isoformat()

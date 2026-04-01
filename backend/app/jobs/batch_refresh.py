@@ -166,7 +166,7 @@ class BatchRefreshOrchestrator:
             if refresh_quote:
                 quote = await self._market.get_current_price(ticker, skip_cache=True)
                 maybe_price = quote.get("price")
-                if isinstance(maybe_price, (float, int)):
+                if isinstance(maybe_price, float | int):
                     quote_price = float(maybe_price)
             if refresh_fundamentals:
                 snap = await self._fundamentals.get_snapshot(ticker, force=True)

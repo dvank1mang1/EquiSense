@@ -303,7 +303,9 @@ async def get_nightly_summary(
 
     items: list[NightlyModelSummary] = []
     for mid in ROLLOUT_MODEL_IDS:
-        runs = await service.list_experiments(model_id=mid.value, ticker=None, limit=limit_per_model)
+        runs = await service.list_experiments(
+            model_id=mid.value, ticker=None, limit=limit_per_model
+        )
         latest = runs[0] if runs else None
         lifecycle = await service.get_lifecycle(mid.value)
         promotion_decision = None
