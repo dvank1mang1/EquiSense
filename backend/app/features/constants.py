@@ -27,7 +27,7 @@ SENTIMENT_FEATURES = [
     "news_count",
     "positive_ratio",
     "negative_ratio",
-    "sentiment_momentum",
+    "sentiment_std",
 ]
 
 LAG_FEATURES = [
