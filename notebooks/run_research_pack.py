@@ -397,27 +397,57 @@ def _strategy_rank_eval(
     scored: pd.DataFrame,
     *,
     y_true: pd.Series,
-    top_k: int = 10,
-) -> dict[str, float]:
-    rank = precision_recall_at_k(y_true, scored["score"].values, k=max(1, int(len(scored) * 0.25)))
+    top_frac: float = 0.2,
+) -> tuple[dict[str, float], pd.DataFrame]:
+    """
+    Strategy ranking evaluation with per-date top-fraction portfolio construction.
+
+    Fixes two methodological issues:
+    1) no global precision@k over pooled rows (uses per-date precision and averages),
+    2) no fixed top_k that can select full universe on small cross-sections.
+    """
+    if not (0.0 < top_frac < 1.0):
+        raise ValueError("top_frac must be in (0, 1)")
+    s = scored.copy()
+    s["target"] = np.asarray(y_true).astype(int)
+    s = s.dropna(subset=["date", "score", "forward_return", "target"]).copy()
+    if s.empty:
+        return {}, pd.DataFrame(columns=["date", "n_assets", "k_used", "selected_fraction"])
     fm = financial_selection_metrics(scored, score_col="score", return_col="forward_return")
     icm = information_coefficient_metrics(scored, score_col="score", return_col="forward_return")
-    rows = []
-    for _, g in scored.groupby("date"):
+    daily_portfolio_returns: list[float] = []
+    selected_returns: list[float] = []
+    daily_precisions: list[float] = []
+    debug_rows: list[dict[str, float | int | str]] = []
+    for dt, g in s.groupby("date"):
         gs = g.sort_values("score", ascending=False)
-        k = max(1, min(top_k, len(gs)))
+        n_assets = len(gs)
+        k = int(np.floor(top_frac * n_assets))
+        k = max(1, k)
+        if n_assets > 1:
+            k = min(k, n_assets - 1)
+        else:
+            k = 1
         top = gs.iloc[:k]
-        rows.append(float(top["forward_return"].mean()))
-    daily = np.asarray(rows, dtype=float) if rows else np.asarray([0.0], dtype=float)
-    selected = []
-    for _, g in scored.groupby("date"):
-        gs = g.sort_values("score", ascending=False)
-        k = max(1, min(top_k, len(gs)))
-        selected.extend(gs.iloc[:k]["forward_return"].tolist())
-    selected_arr = np.asarray(selected, dtype=float) if selected else np.asarray([0.0], dtype=float)
-    return {
-        "precision_at_k": float(rank["precision_at_k"]),
-        "recall_at_k": float(rank["recall_at_k"]),
+        daily_portfolio_returns.append(float(top["forward_return"].mean()))
+        selected_returns.extend(top["forward_return"].tolist())
+        daily_precisions.append(float(top["target"].mean()))
+        debug_rows.append(
+            {
+                "date": str(pd.Timestamp(dt).date()),
+                "n_assets": int(n_assets),
+                "k_used": int(k),
+                "selected_fraction": float(k / n_assets),
+            }
+        )
+    daily = np.asarray(daily_portfolio_returns, dtype=float) if daily_portfolio_returns else np.asarray([0.0])
+    selected_arr = (
+        np.asarray(selected_returns, dtype=float) if selected_returns else np.asarray([0.0], dtype=float)
+    )
+    daily_prec = np.asarray(daily_precisions, dtype=float) if daily_precisions else np.asarray([np.nan])
+    out = {
+        "precision_at_k": float(np.nanmean(daily_prec)),
+        "precision_at_k_std": float(np.nanstd(daily_prec, ddof=1)) if len(daily_prec) > 1 else 0.0,
         "ic": float(icm.get("ic_mean", np.nan)),
         "rank_ic": float(icm.get("rank_ic_mean", np.nan)),
         "quantile_top_return": float(fm.get("top_quantile_return", np.nan)),
@@ -426,7 +456,9 @@ def _strategy_rank_eval(
         "sharpe": float(annualized_sharpe(daily)),
         "average_return": float(np.nanmean(daily)),
         "hit_rate": float(np.nanmean(selected_arr > 0.0)),
+        "avg_selected_fraction": float(np.nanmean([r["selected_fraction"] for r in debug_rows]))
     }
+    return out, pd.DataFrame(debug_rows)
 
 
 def _diebold_on_test(
@@ -830,6 +862,7 @@ def run_pipeline(
     # Strategy-level comparison aligned with thesis topic:
     # technical vs fundamental vs alternative vs hybrid.
     strategy_rows: list[dict[str, float | str]] = []
+    strategy_debug_frames: list[pd.DataFrame] = []
     for strategy in [
         "technical_only",
         "fundamental_strategy",
@@ -848,7 +881,10 @@ def run_pipeline(
         scored_s = d.loc[m_te, ["date", "ticker", "ret_1d"]].copy()
         scored_s = scored_s.rename(columns={"ret_1d": "forward_return"})
         scored_s["score"] = proba_s
-        rank_eval = _strategy_rank_eval(scored_s, y_true=y_te_s, top_k=10)
+        rank_eval, debug_df = _strategy_rank_eval(scored_s, y_true=y_te_s, top_frac=0.2)
+        if not debug_df.empty:
+            debug_df["strategy"] = strategy
+            strategy_debug_frames.append(debug_df)
         strategy_rows.append(
             {
                 "strategy": strategy,
@@ -858,6 +894,9 @@ def run_pipeline(
         )
     strategy_df = pd.DataFrame(strategy_rows).sort_values("sharpe", ascending=False)
     strategy_df.to_csv(OUT_DIR / "strategy_comparison.csv", index=False)
+    if strategy_debug_frames:
+        strategy_debug = pd.concat(strategy_debug_frames, ignore_index=True)
+        strategy_debug.to_csv(OUT_DIR / "strategy_selection_debug.csv", index=False)
     if not strategy_df.empty:
         best = strategy_df.iloc[0]
         interp = (
