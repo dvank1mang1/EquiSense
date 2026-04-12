@@ -16,13 +16,34 @@ from app.data.persistence import (
     write_fundamentals_json,
 )
 from app.data.utils import normalize_ticker
-from app.domain.exceptions import (
-    DataProviderConfigError,
-    DataProviderError,
-    UpstreamRateLimitError,
-)
+from app.domain.exceptions import DataProviderError, UpstreamRateLimitError
 
 ALPHA_BASE = "https://www.alphavantage.co/query"
+
+
+def _overview_has_useful_metrics(overview: dict[str, Any]) -> bool:
+    """False для заглушки download-скрипта (только Symbol/Name) — тогда нужен live OVERVIEW."""
+    for k in (
+        "PERatio",
+        "EPS",
+        "MarketCapitalization",
+        "QuarterlyRevenueGrowthYOY",
+        "ReturnOnEquityTTM",
+        "DividendYield",
+        "DebtToEquityRatio",
+    ):
+        v = overview.get(k)
+        if v is None:
+            continue
+        s = str(v).strip().lower()
+        if s in ("", "none", "n/a", "-"):
+            continue
+        return True
+    for k in ("pe_ratio", "eps", "roe", "revenue_growth", "debt_to_equity", "dividend_yield"):
+        v = overview.get(k)
+        if isinstance(v, (int, float)) and v == v:
+            return True
+    return False
 
 
 def _check_alpha_payload(payload: dict[str, Any]) -> None:
@@ -55,14 +76,21 @@ class FundamentalDataClient:
             if cached is not None:
                 logger.info("Using cached fundamentals for {} (no API key)", sym)
                 return cached
-            raise DataProviderConfigError(
-                "Set ALPHA_VANTAGE_API_KEY or place data/raw/fundamentals/{TICKER}.json"
+            logger.info(
+                "No ALPHA_VANTAGE_API_KEY and no raw/fundamentals/{}.json — UI stub; enrich may use yfinance",
+                sym,
             )
+            return {"Symbol": sym, "Name": sym}
 
         if not force and self._fundamentals_cache_fresh(sym):
             cached = await read_fundamentals_json(sym)
-            if cached is not None:
+            if cached is not None and _overview_has_useful_metrics(cached):
                 return cached
+            if cached is not None:
+                logger.info(
+                    "Fundamentals JSON for {} is fresh but без мультипликаторов — запрашиваем OVERVIEW (Alpha Vantage)",
+                    sym,
+                )
 
         await self._limiter.acquire()
         params = {

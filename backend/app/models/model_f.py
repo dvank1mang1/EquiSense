@@ -45,7 +45,7 @@ class ModelF(BaseMLModel):
             min_child_samples=24,
             random_state=42,
             n_jobs=-1,
-            verbose=-1,
+            verbosity=-1,
         )
         self.model = VotingClassifier(
             estimators=[("xgb", xgb), ("lgb", lgb)],

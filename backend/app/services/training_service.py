@@ -5,6 +5,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -199,6 +200,50 @@ class TrainingService:
         self._experiment_store = experiment_store
         self._lifecycle = lifecycle
 
+    async def resolve_inference_artifact(self, model_id: ModelId) -> tuple[str | None, str | None]:
+        """
+        Resolve which file to load for inference.
+
+        Order: canonical ``{model_dir}/{model_id}.joblib`` (use default path in service)
+        → promoted champion run → latest completed experiment with an on-disk artifact.
+
+        Returns ``(artifact_path, run_id)``. ``(None, None)`` means the flat canonical
+        file exists and callers should pass ``artifact_path=None`` to :meth:`load`.
+        """
+        settings = get_settings()
+        flat = Path(settings.model_dir) / f"{model_id.value}.joblib"
+        if flat.is_file():
+            return None, None
+
+        state = await self.get_lifecycle(model_id.value)
+        if state.champion_run_id:
+            run = await self.get_status(state.champion_run_id)
+            if run and run.artifact_path:
+                p = Path(run.artifact_path)
+                if p.is_file():
+                    return str(p), state.champion_run_id
+
+        for run in await self.list_experiments(model_id=model_id.value, limit=50):
+            if run.status != "completed" or not run.artifact_path:
+                continue
+            p = Path(run.artifact_path)
+            if p.is_file():
+                return str(p), run.run_id
+
+        # After API restart in-memory registry is empty; artifacts may still exist on disk.
+        model_root = Path(settings.model_dir) / model_id.value
+        if model_root.is_dir():
+            found = sorted(
+                model_root.glob("*/model.joblib"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if found:
+                best = found[0]
+                return str(best), best.parent.name
+
+        return None, None
+
     async def start_training(self, model_id: ModelId, ticker: str) -> TrainingRun:
         sym = ticker.strip().upper()
         settings = get_settings()
@@ -383,6 +428,67 @@ class TrainingService:
             ticker=normalized_ticker,
             limit=limit,
         )
+
+    async def offline_metrics_for_ticker_model(
+        self, model_id: ModelId, ticker: str
+    ) -> dict[str, float | None]:
+        """
+        F1 / ROC-AUC с holdout-теста последнего завершённого обучения на этом тикере.
+
+        Не подмешивает метрики champion-run с другого тикера.
+        """
+        sym = ticker.strip().upper()
+        out: dict[str, float | None] = {
+            "f1": None,
+            "roc_auc": None,
+            "precision": None,
+            "recall": None,
+        }
+        seen: set[str] = set()
+        ordered: list[TrainingRun] = []
+
+        def add(run: TrainingRun | None) -> None:
+            if run is None or run.run_id in seen:
+                return
+            seen.add(run.run_id)
+            ordered.append(run)
+
+        _, run_id = await self.resolve_inference_artifact(model_id)
+        if run_id:
+            r = await self.get_status(run_id)
+            if r is not None and r.ticker == sym:
+                add(r)
+        for r in await self.list_experiments(model_id=model_id.value, ticker=sym, limit=40):
+            add(r)
+
+        for run in ordered:
+            if run.status != "completed" or not run.metrics:
+                continue
+            m = run.metrics
+            if _metric(m, "f1") is None and _metric(m, "roc_auc") is None:
+                continue
+            out["f1"] = _metric(m, "f1")
+            out["roc_auc"] = _metric(m, "roc_auc")
+            out["precision"] = _metric(m, "precision")
+            out["recall"] = _metric(m, "recall")
+            return out
+
+        # Плоские joblib после train_flat_demo_model.py: experiment store часто memory и пуст в API.
+        sidecar = Path(get_settings().model_dir).resolve() / f"{model_id.value}.metrics.json"
+        if sidecar.is_file():
+            try:
+                raw = json.loads(sidecar.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError, TypeError):
+                raw = {}
+            if isinstance(raw, dict) and str(raw.get("ticker", "")).strip().upper() == sym:
+                if _metric(raw, "f1") is not None or _metric(raw, "roc_auc") is not None:
+                    return {
+                        "f1": _metric(raw, "f1"),
+                        "roc_auc": _metric(raw, "roc_auc"),
+                        "precision": _metric(raw, "precision"),
+                        "recall": _metric(raw, "recall"),
+                    }
+        return out
 
     async def promote_champion(
         self, model_id: str, run_id: str, *, reason: str, force: bool = False
@@ -579,7 +685,10 @@ def _prepare_training_frames(
     work = work.dropna(subset=["forward_return"])
     work["target"] = (work["forward_return"] > 0.0).astype("int64")
 
-    work = work.dropna(subset=feature_set)
+    # Sparse fundamental/sentiment columns would drop almost all rows with dropna(subset=feature_set).
+    # Median imputation runs on train; keep rows that have at least one non-null model feature.
+    feat_block = work.reindex(columns=list(feature_set))
+    work = work.loc[~feat_block.isna().all(axis=1)].copy()
     if len(work) < min_rows:
         raise ValueError(
             f"need at least {min_rows} rows with valid features and next-day return for train/val/test"

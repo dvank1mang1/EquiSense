@@ -10,10 +10,14 @@ from app.contracts.data_providers import (
     MarketDataProvider,
     NewsDataProvider,
 )
+from app.core.config import settings
 from app.data.local_artifacts import summarize_data_artifacts
+from app.data.news_filter import filter_news_for_ticker
 from app.data.periods import ohlcv_tail_by_period
 from app.data.persistence import (
     list_cached_ohlcv_tickers,
+    read_fundamentals_json,
+    read_news_json_sync,
     read_ohlcv_parquet,
     write_news_json_sync,
 )
@@ -24,6 +28,8 @@ from app.domain.exceptions import (
     DataProviderError,
     UpstreamRateLimitError,
 )
+from app.features.fundamental import enrich_overview_for_ui
+from app.features.sentiment import attach_finbert_to_news_items
 from app.features.technical import TechnicalFeatureEngineer
 from app.services.dependencies import (
     get_fundamental_data_provider,
@@ -32,6 +38,19 @@ from app.services.dependencies import (
 )
 
 router = APIRouter()
+
+
+async def _enrich_fundamentals_async(payload: dict[str, Any]) -> dict[str, Any]:
+    """enrich_overview_for_ui дергает yfinance синхронно — только в thread pool, иначе блокируется весь ASGI."""
+
+    def _run() -> dict[str, Any]:
+        try:
+            return enrich_overview_for_ui(payload)
+        except Exception as e:
+            logger.warning("enrich_overview_for_ui failed: {}", e)
+            return dict(payload)
+
+    return await asyncio.to_thread(_run)
 
 
 class StockRefreshBody(BaseModel):
@@ -46,7 +65,7 @@ class StockRefreshBody(BaseModel):
     quote: bool = True
     news: bool = Field(
         False,
-        description="Fetch headlines and cache under data/raw/news/{TICKER}.json (FinBERT runs in batch ETL, not here).",
+        description="Загрузить заголовки в data/raw/news/{TICKER}.json; тональность в UI — через GET /news (FinBERT).",
     )
 
 
@@ -112,6 +131,9 @@ async def get_stock_overview(
         fundamentals = {"_error": str(e)}
     except (DataProviderError, UpstreamRateLimitError) as e:
         _raise_http_from_data_error(e)
+
+    if "_error" not in fundamentals:
+        fundamentals = await _enrich_fundamentals_async(fundamentals)
 
     return {
         "ticker": sym,
@@ -186,7 +208,7 @@ async def get_fundamentals(
         raise HTTPException(status_code=503, detail=str(e)) from e
     except (DataProviderError, UpstreamRateLimitError) as e:
         _raise_http_from_data_error(e)
-    return {"ticker": sym, "fundamentals": data}
+    return {"ticker": sym, "fundamentals": await _enrich_fundamentals_async(data)}
 
 
 @router.get("/{ticker}/news")
@@ -195,12 +217,45 @@ async def get_news(
     limit: int = Query(20, ge=1, le=100),
     news: NewsDataProvider = Depends(get_news_data_provider),
 ):
+    """Заголовки: live API; фильтр релевантности; FinBERT (если news_finbert_enabled); кэш raw/news при сбое."""
     sym = normalize_ticker(ticker)
+    warning: str | None = None
+    items: list[dict[str, Any]] = []
+
     try:
         items = await news.get_recent(ticker, limit=limit)
     except (DataProviderError, UpstreamRateLimitError) as e:
-        _raise_http_from_data_error(e)
-    return {"ticker": sym, "news": items}
+        warning = str(e)
+        logger.warning("stocks.news live fetch failed ticker={} : {}", sym, e)
+
+    if not items:
+        cached = await asyncio.to_thread(read_news_json_sync, sym)
+        if cached:
+            take = min(len(cached), max(limit * 4, 40))
+            items = cached[:take]
+            if warning:
+                warning = "Показаны сохранённые заголовки (live API недоступен)."
+
+    overview = await read_fundamentals_json(sym)
+    company_name: str | None = None
+    if isinstance(overview, dict):
+        raw_name = overview.get("Name")
+        if isinstance(raw_name, str) and raw_name.strip():
+            company_name = raw_name.strip()
+
+    items = filter_news_for_ticker(items, sym, company_name=company_name, limit=limit)
+
+    if settings.news_finbert_enabled and items:
+
+        def _run_finbert() -> None:
+            try:
+                attach_finbert_to_news_items(items)
+            except Exception as e:
+                logger.warning("stocks.news FinBERT failed ticker={}: {}", sym, e)
+
+        await asyncio.to_thread(_run_finbert)
+
+    return {"ticker": sym, "news": items, "warning": warning}
 
 
 @router.post("/{ticker}/refresh")
@@ -258,7 +313,7 @@ async def refresh_stock_data(
     if body.news:
         try:
             items = await news.get_recent(ticker, limit=100)
-            path = write_news_json_sync(sym, items)
+            path = await asyncio.to_thread(write_news_json_sync, sym, items)
             result["news"] = {"cached_path": str(path), "count": len(items)}
         except (DataProviderError, UpstreamRateLimitError) as e:
             _raise_http_from_data_error(e)

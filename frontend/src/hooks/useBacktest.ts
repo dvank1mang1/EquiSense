@@ -1,14 +1,16 @@
 import useSWR from "swr";
-import { api } from "@/lib/api";
+import { apiGet } from "@/lib/api";
+import { normalizeJsonValue } from "@/types/api";
 
 /** Backtest runs pandas + optional OHLCV I/O; compare runs six models — allow > default 30s axios timeout. */
 const BACKTEST_TIMEOUT_MS = 120_000;
 
 const fetcher = (url: string) =>
-  api.get(url, { timeout: BACKTEST_TIMEOUT_MS }).then((r) => r.data);
+  apiGet<any>(url, { timeout: BACKTEST_TIMEOUT_MS }, normalizeJsonValue as (data: unknown) => any);
 
 export function useBacktest(ticker: string, model: string) {
-  return useSWR(ticker ? `/backtesting/${ticker}?model=${model}` : null, fetcher, {
+  const qs = new URLSearchParams({ model }).toString();
+  return useSWR(ticker ? `/backtesting/${ticker}?${qs}` : null, fetcher, {
     keepPreviousData: true,
   });
 }

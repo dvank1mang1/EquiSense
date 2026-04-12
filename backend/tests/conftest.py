@@ -123,4 +123,5 @@ def sample_overview_dict() -> dict:
         "QuarterlyRevenueGrowthYOY": "0.082",
         "ReturnOnEquityTTM": "0.147",
         "DebtToEquityRatio": "1.23",
+        "DividendYield": "0.015",
     }

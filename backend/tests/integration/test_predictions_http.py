@@ -233,6 +233,63 @@ def test_get_prediction_accepts_champion_selector() -> None:
 
 
 @pytest.mark.integration
+def test_prediction_endpoints_normalize_ticker_before_service_call() -> None:
+    from main import app
+
+    class _Svc:
+        async def predict(
+            self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+        ):
+            from app.domain.prediction import PredictionOutcome
+
+            _ = model_id, artifact_path
+            assert ticker == "AAPL"
+            return PredictionOutcome(
+                ticker=ticker,
+                model_id="model_d",
+                probability=0.6,
+                signal="Buy",
+                confidence=0.2,
+                explanation={"stage": "test"},
+            )
+
+        async def readiness(
+            self, ticker: str, model_id: ModelId, *, artifact_path: str | None = None
+        ):
+            _ = model_id, artifact_path
+            assert ticker == "AAPL"
+            return PredictionReadinessOutcome(
+                ticker=ticker,
+                model_id="model_d",
+                ready=True,
+                checks={"model_artifact": {"ok": True, "detail": "ok"}},
+            )
+
+    class _Training:
+        async def resolve_inference_artifact(self, model_id: ModelId):
+            _ = model_id
+            return None, None
+
+        async def get_lifecycle(self, model_id: str):
+            _ = model_id
+            return type("State", (), {"champion_run_id": None})()
+
+    app.dependency_overrides[get_prediction_service] = lambda: _Svc()
+    app.dependency_overrides[get_training_service] = lambda: _Training()
+    try:
+        client = TestClient(app)
+        for path in (
+            "/api/v1/predictions/%20aapl%20?model=model_d",
+            "/api/v1/predictions/%20aapl%20/readiness?model=model_d",
+            "/api/v1/predictions/%20aapl%20/status?model=model_d",
+        ):
+            r = client.get(path)
+            assert r.status_code == 200
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.integration
 def test_get_prediction_compare_returns_mixed_model_results() -> None:
     from main import app
 

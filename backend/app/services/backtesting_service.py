@@ -13,9 +13,16 @@ from app.core.config import settings
 from app.data.persistence import read_ohlcv_parquet
 from app.data.utils import normalize_ticker
 from app.domain.exceptions import BacktestDependencyError, BacktestInputError
-from app.domain.identifiers import ROLLOUT_MODEL_IDS, ModelId
+from app.domain.identifiers import ROLLOUT_MODEL_IDS, FeatureSlice, ModelId
 from app.models import get_model_class
 from app.schemas.backtest import BacktestMetrics, BacktestResponse, EquityPoint
+
+
+def _backtest_remote_ohlcv_allowed() -> bool:
+    """Network OHLCV for backtests when explicitly allowed or Alpha Vantage is configured."""
+    if settings.backtest_allow_network_fallback:
+        return True
+    return bool((settings.alpha_vantage_api_key or "").strip())
 
 
 def _resolve_feature_set(instance: object) -> list[str]:
@@ -68,22 +75,32 @@ class BacktestingService:
 
         cached_ohlcv = await read_ohlcv_parquet(sym_key)
         has_cached_ohlcv = cached_ohlcv is not None and not cached_ohlcv.empty
-        has_combined = self._features.exists(sym, "combined")
+        # ETL writes technical/fundamental/sentiment Parquet; combined is built in memory via
+        # build_combined() (there is usually no combined.parquet on disk).
+        has_technical = self._features.exists(sym, FeatureSlice.TECHNICAL.value)
+        remote_ok = _backtest_remote_ohlcv_allowed()
 
-        ready = has_cached_ohlcv and has_combined
+        ready = has_technical and (has_cached_ohlcv or remote_ok)
         reason = ""
-        if not has_cached_ohlcv and not has_combined:
-            reason = "missing cached OHLCV and combined features"
+        if not has_cached_ohlcv and not has_technical:
+            reason = "нет кэшированного OHLCV и обработанных технических фич"
         elif not has_cached_ohlcv:
-            reason = "missing cached OHLCV"
-        elif not has_combined:
-            reason = "missing combined features"
+            reason = (
+                "OHLCV подтянется из Alpha Vantage при запуске бэктеста (локального кэша нет)"
+                if remote_ok
+                else "нет кэшированного OHLCV в data/raw/ohlcv — задайте ALPHA_VANTAGE_API_KEY, "
+                "BACKTEST_ALLOW_NETWORK_FALLBACK=true или выполните refresh-universe"
+            )
+        elif not has_technical:
+            reason = "нет processed/technical (запустите ETL: refresh-universe с run_etl или download_ohlcv_dataset … --run-etl)"
 
         return {
             "ticker": sym,
             "ready": ready,
             "has_cached_ohlcv": has_cached_ohlcv,
-            "has_combined_features": has_combined,
+            # Имя поля историческое: True, если можно собрать combined (есть technical.parquet).
+            "has_combined_features": has_technical,
+            "has_processed_technical": has_technical,
             "reason": reason,
         }
 
@@ -103,10 +120,10 @@ class BacktestingService:
         if cached_ohlcv is not None and not cached_ohlcv.empty:
             raw_price = cached_ohlcv
         else:
-            if not settings.backtest_allow_network_fallback:
+            if not _backtest_remote_ohlcv_allowed():
                 raise BacktestDependencyError(
-                    "No cached OHLCV for backtest; run refresh-universe first "
-                    "or set BACKTEST_ALLOW_NETWORK_FALLBACK=true"
+                    "No cached OHLCV for backtest; run refresh-universe first or set "
+                    "ALPHA_VANTAGE_API_KEY (or BACKTEST_ALLOW_NETWORK_FALLBACK=true)"
                 )
             raw_price = await self._market.get_daily_ohlcv(
                 ticker, output_size="full", skip_cache=False

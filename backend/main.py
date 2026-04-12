@@ -89,31 +89,27 @@ async def request_id_middleware(request: Request, call_next):
     method = request.method
     path = request.url.path
     client_ip = request.client.host if request.client else "-"
+    request_logger = logger.bind(
+        request_id=request_id,
+        method=method,
+        path=path,
+        client_ip=client_ip,
+    )
+    request.state.logger = request_logger
     try:
         response = await call_next(request)
     except Exception:
         duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
-        logger.bind(
-            request_id=request_id,
-            method=method,
-            path=path,
-            client_ip=client_ip,
-            duration_ms=duration_ms,
-        ).exception("HTTP request failed")
+        request_logger.bind(duration_ms=duration_ms).exception("HTTP request failed")
         raise
 
     duration_ms = round((time.perf_counter() - started) * 1000.0, 2)
     status_code = response.status_code
-    log = logger.warning if status_code >= 500 else logger.info
-    log(
-        "HTTP {method} {path} -> {status_code} ({duration_ms} ms) [request_id={request_id}, client_ip={client_ip}]",
-        method=method,
-        path=path,
-        status_code=status_code,
-        duration_ms=duration_ms,
-        request_id=request_id,
-        client_ip=client_ip,
-    )
+    response_log = request_logger.bind(status_code=status_code, duration_ms=duration_ms)
+    if status_code >= 500:
+        response_log.warning("HTTP request completed with server error")
+    else:
+        response_log.info("HTTP request completed")
     response.headers["X-Request-ID"] = request_id
     return response
 
@@ -121,11 +117,13 @@ async def request_id_middleware(request: Request, call_next):
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     request_id = getattr(request.state, "request_id", "unknown")
-    logger.warning(
-        "HTTPException {status_code} on {path} [request_id={request_id}]: {detail}",
-        status_code=exc.status_code,
-        path=request.url.path,
-        request_id=request_id,
+    request_logger = getattr(
+        request.state,
+        "logger",
+        logger.bind(request_id=request_id, path=request.url.path, method=request.method),
+    )
+    request_logger.bind(status_code=exc.status_code).warning(
+        "HTTP exception: {detail}",
         detail=str(exc.detail),
     )
     code = f"http_{exc.status_code}"
@@ -142,7 +140,12 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", "unknown")
-    logger.exception("Unhandled error (request_id={}): {}", request_id, exc)
+    request_logger = getattr(
+        request.state,
+        "logger",
+        logger.bind(request_id=request_id, path=request.url.path, method=request.method),
+    )
+    request_logger.exception("Unhandled error: {}", exc)
     return JSONResponse(
         status_code=500,
         content={

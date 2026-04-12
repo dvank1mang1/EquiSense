@@ -16,6 +16,17 @@ from app.services.backtesting_service import BacktestingService
 from app.services.dependencies import get_backtesting_service
 
 
+def _postgres_job_queue_reachable() -> bool:
+    try:
+        q = PostgresJobQueue()
+        with q._connect() as conn:  # type: ignore[attr-defined]
+            with conn.cursor() as cur:  # type: ignore[assignment]
+                cur.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
 class _FakeMarket:
     async def get_daily_ohlcv(
         self, ticker: str, output_size: str = "full", *, skip_cache: bool = False
@@ -54,6 +65,9 @@ class _FakeStore:
 
 @pytest.mark.integration
 def test_backtest_job_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not _postgres_job_queue_reachable():
+        pytest.skip("Postgres job queue недоступен (запустите postgres, например docker compose up postgres)")
+
     from main import app
 
     class _Model:

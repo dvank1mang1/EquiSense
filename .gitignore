@@ -24,6 +24,10 @@ wheels/
 venv/
 env/
 
+# Kaggle bulk (large; often under backend/)
+backend/price-volume-data-for-all-us-stocks-etfs.zip
+backend/kaggle-price-volume/
+
 # Data (raw data not tracked — too large)
 data/raw/
 data/processed/
@@ -54,6 +58,7 @@ out/
 frontend/.next/
 frontend/node_modules/
 frontend/out/
+*.tsbuildinfo
 
 # OS
 .DS_Store

@@ -46,8 +46,17 @@ cp .env.example .env
 docker-compose up --build
 ```
 
+После первого старта, чтобы **бэктест и прогнозы** видели фичи, один раз прогоните данные и ETL в общий volume `./data` (из хоста, пока контейнеры запущены):
+
+```bash
+docker compose exec backend uv run python scripts/download_ohlcv_dataset.py public-sample --run-etl
+docker compose exec backend uv run python scripts/train_flat_demo_model.py --ticker AAPL --all
+```
+
+Флаг **`--all`** обучает **baseline_lr** и **model_a … model_f** (все переключатели в UI) и пишет плоские `*.joblib` в `data/models/`. Одна модель: `--model model_d` без `--all`. Свой набор OHLCV — см. раздел «Локальные котировки» ниже.
+
 Сервисы будут доступны:
-- Frontend: http://localhost:3000
+- Frontend: http://localhost:3002
 - Backend API: http://localhost:8000
 - API Docs: http://localhost:8000/docs
 - Prometheus: http://localhost:9090
@@ -79,6 +88,34 @@ uv run pytest tests -q
 Метрики backend (Prometheus format): `GET /metrics` (настраивается через `METRICS_PATH`).
 
 С **docker-compose** backend использует отдельный volume `backend_venv:/app/.venv`, поэтому локальный `backend/.venv` не ломает контейнерный runtime.
+
+### Локальные котировки и ETL без Alpha Vantage
+
+Если в UI «нет данных» по тикеру, чаще всего нет файла `data/raw/ohlcv/{TICKER}.parquet`. Лимиты Alpha Vantage обходятся так: подтянуть OHLCV через **yfinance** и прогнать тот же ETL, что и для raw (technical / fundamental / sentiment с нулевыми новостями).
+
+Из каталога `backend/`:
+
+```bash
+uv run python scripts/download_ohlcv_dataset.py yfinance \
+  --tickers AAPL MSFT GOOGL TSLA AMZN NVDA META JPM \
+  --period 10y --sleep 0.25 --run-etl
+```
+
+Подкоманда `yfinance` по умолчанию использует **`--source auto`**: сначала Yahoo (`download` + `history`), при пустом ответе или ошибке JSON — **Stooq**. У Stooq для выдачи CSV нужен ключ: страница [get_apikey](https://stooq.com/q/d/?s=aapl.us&get_apikey) → `export STOOQ_API_KEY=...`. Только Stooq: `--source stooq`.
+
+- По умолчанию данные пишутся в **`EquiSense/data/`** (корень репозитория), совпадает с volume `./data:/app/data` в `docker-compose`.
+- Другой каталог: переменная `EQUISENSE_DATA_ROOT=/path/to/data` или флаг **`--data-root` только перед подкомандой**:  
+  `uv run python scripts/download_ohlcv_dataset.py --data-root /abs/path/data yfinance --tickers AAPL --run-etl`
+- Локальный `uvicorn` из `backend/` по умолчанию смотрит в `backend/data/`. Чтобы использовать общий каталог с Docker, задайте, например:  
+  `export MODEL_DIR="$(cd .. && pwd)/data/models"` перед запуском API.
+
+Быстро без ключей и без Yahoo/Stooq: **`public-sample`** — один CSV с jsDelivr (Vega Datasets), несколько тикеров (месячные цены как синтетический OHLCV для демо):
+
+```bash
+uv run python scripts/download_ohlcv_dataset.py public-sample --run-etl
+```
+
+Ещё: `plotly-demo` (только AAPL), `stooq` (+`STOOQ_API_KEY`), импорт `csv` — см. `backend/scripts/download_ohlcv_dataset.py --help`.
 
 **Frontend:**
 ```bash

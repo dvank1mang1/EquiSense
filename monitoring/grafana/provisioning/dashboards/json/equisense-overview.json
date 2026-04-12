@@ -5,7 +5,7 @@
   "tags": ["equisense", "api"],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "10s",
   "time": {
     "from": "now-1h",
@@ -22,7 +22,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_total[5m]))",
+          "expr": "sum(rate(http_requests_total{job=\"equisense-backend\"}[5m]))",
           "legendFormat": "req/s",
           "refId": "A"
         }
@@ -37,12 +37,12 @@
     },
     {
       "type": "stat",
-      "title": "5xx Error Rate",
+      "title": "SLO: API 5xx Error Budget (<= 1%)",
       "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1e-9)",
+          "expr": "sum(rate(http_requests_total{job=\"equisense-backend\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{job=\"equisense-backend\"}[5m])), 1e-9)",
           "legendFormat": "5xx rate",
           "refId": "A"
         }
@@ -71,12 +71,12 @@
     },
     {
       "type": "stat",
-      "title": "Latency p95 (all requests)",
+      "title": "SLO: Prediction p95 Latency (<= 1.5s)",
       "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"equisense-backend\",handler=~\"/api/v1/predictions.*\"}[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "A"
         }
@@ -91,13 +91,13 @@
     },
     {
       "type": "stat",
-      "title": "Process Uptime",
+      "title": "Prediction Non-2xx Ratio",
       "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "time() - process_start_time_seconds",
-          "legendFormat": "uptime",
+          "expr": "sum(rate(http_requests_total{job=\"equisense-backend\",handler=~\"/api/v1/predictions.*\",status!~\"2..\"}[5m])) / clamp_min(sum(rate(http_requests_total{job=\"equisense-backend\",handler=~\"/api/v1/predictions.*\"}[5m])), 1e-9)",
+          "legendFormat": "non-2xx",
           "refId": "A"
         }
       ],
@@ -107,7 +107,21 @@
         "textMode": "value",
         "colorMode": "value"
       },
-      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.01 },
+              { "color": "red", "value": 0.02 }
+            ]
+          }
+        },
+        "overrides": []
+      }
     },
     {
       "type": "timeseries",
@@ -116,7 +130,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_total[5m])) by (handler)",
+          "expr": "sum(rate(http_requests_total{job=\"equisense-backend\"}[5m])) by (handler)",
           "legendFormat": "{{handler}}",
           "refId": "A"
         }
@@ -131,7 +145,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler))",
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"equisense-backend\"}[5m])) by (le, handler))",
           "legendFormat": "{{handler}}",
           "refId": "A"
         }
@@ -146,7 +160,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(http_requests_total[5m])) by (status)",
+          "expr": "sum(rate(http_requests_total{job=\"equisense-backend\"}[5m])) by (status)",
           "legendFormat": "status {{status}}",
           "refId": "A"
         }
@@ -161,12 +175,12 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"equisense-backend\"}[5m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"equisense-backend\"}[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         }

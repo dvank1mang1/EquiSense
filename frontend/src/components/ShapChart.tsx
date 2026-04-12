@@ -25,12 +25,48 @@ const GROUP_COLORS: Record<string, string> = {
 export default function ShapChart({ ticker, model }: ShapChartProps) {
   const { data, error, isLoading } = useShapExplanation(ticker, model);
 
-  if (isLoading) return <div className="h-64 animate-pulse bg-surface-700 rounded-lg" />;
+  if (isLoading) {
+    return (
+      <div
+        className="relative h-64 overflow-hidden rounded-xl border border-surface-700/50 bg-surface-900/20"
+        role="status"
+        aria-live="polite"
+      >
+        <span className="sr-only">Загрузка SHAP…</span>
+        <div className="absolute inset-4 flex flex-col gap-3">
+          <div className="flex gap-2">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="h-16 flex-1 rounded-xl border border-surface-700/40 bg-surface-800/40 animate-pulse"
+                style={{ animationDelay: `${i * 100}ms` }}
+              />
+            ))}
+          </div>
+          <div className="flex flex-1 flex-col justify-center gap-2 pl-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <div
+                  className="h-2 flex-1 rounded-md bg-surface-700/60 animate-pulse"
+                  style={{ animationDelay: `${i * 80}ms` }}
+                />
+                <div className="h-2 w-8 rounded-md bg-surface-600/40 animate-pulse" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (error) {
     return <ApiErrorNotice error={error} title="SHAP недоступен" tone="warning" />;
   }
   if (!data?.features?.length) {
-    return <p className="text-slate-500 text-sm">Данные недоступны — обучите модель</p>;
+    return (
+      <p className="rounded-xl border border-surface-700/50 bg-surface-900/20 px-4 py-3 text-sm leading-relaxed text-slate-500" role="status">
+        Данных SHAP пока нет — проверьте обучение модели.
+      </p>
+    );
   }
 
   const sorted = [...data.features]
@@ -45,24 +81,30 @@ export default function ShapChart({ ticker, model }: ShapChartProps) {
 
   return (
     <div className="space-y-6">
+      <p className="text-xs leading-relaxed text-slate-500">
+        Вклад признаков и групп в итоговый прогноз; горизонтальный график — топ-15 по |SHAP|.
+      </p>
       {/* Group contributions */}
       {groups && groupTotal > 0 && (
         <div>
-          <p className="text-xs text-slate-400 mb-2 uppercase tracking-wide">Вклад групп признаков</p>
-          <div className="flex gap-3 flex-wrap">
+          <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Вклад групп признаков</p>
+          <div className="flex flex-wrap gap-3">
             {Object.entries(groups).map(([key, val]) => {
               const pct = groupTotal > 0 ? ((val / groupTotal) * 100).toFixed(1) : "0.0";
               return (
-                <div key={key} className="flex-1 min-w-[100px] bg-surface-700 rounded-lg p-3">
-                  <div className="flex items-center gap-2 mb-1">
+                <div
+                  key={key}
+                  className="min-w-[108px] flex-1 rounded-xl border border-surface-700/60 bg-surface-900/25 p-3 shadow-sm shadow-black/5"
+                >
+                  <div className="mb-1.5 flex items-center gap-2">
                     <span
-                      className="w-2.5 h-2.5 rounded-full"
+                      className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white/10"
                       style={{ backgroundColor: GROUP_COLORS[key] ?? "#94a3b8" }}
                     />
-                    <span className="text-xs text-slate-400">{GROUP_LABELS[key] ?? key}</span>
+                    <span className="text-xs font-medium text-slate-400">{GROUP_LABELS[key] ?? key}</span>
                   </div>
-                  <p className="text-lg font-bold text-white">{pct}%</p>
-                  <div className="mt-1 h-1 bg-surface-600 rounded-full overflow-hidden">
+                  <p className="text-lg font-bold tabular-nums tracking-tight text-white">{pct}%</p>
+                  <div className="mt-2 h-1 overflow-hidden rounded-full bg-surface-700/80">
                     <div
                       className="h-full rounded-full transition-all"
                       style={{
@@ -79,32 +121,34 @@ export default function ShapChart({ ticker, model }: ShapChartProps) {
       )}
 
       {/* Waterfall bar chart */}
-      <Plot
-        data={[
-          {
-            type: "bar",
-            orientation: "h",
-            x: sorted.map((f) => f.shap_value),
-            y: sorted.map((f) => f.name),
-            marker: { color: colors },
-          },
-        ]}
-        layout={{
-          height: 400,
-          paper_bgcolor: "transparent",
-          plot_bgcolor: "transparent",
-          font: { color: "#94a3b8", size: 11 },
-          xaxis: {
-            gridcolor: "#334155",
-            title: { text: "SHAP value" },
-            zerolinecolor: "#475569",
-          },
-          yaxis: { automargin: true },
-          margin: { t: 10, b: 40, l: 150, r: 20 },
-        }}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: "100%" }}
-      />
+      <div aria-label={`Важность признаков SHAP для ${ticker}, модель ${model}`}>
+        <Plot
+          data={[
+            {
+              type: "bar",
+              orientation: "h",
+              x: sorted.map((f) => f.shap_value),
+              y: sorted.map((f) => f.name),
+              marker: { color: colors },
+            },
+          ]}
+          layout={{
+            height: 400,
+            paper_bgcolor: "transparent",
+            plot_bgcolor: "transparent",
+            font: { color: "#94a3b8", size: 11 },
+            xaxis: {
+              gridcolor: "#334155",
+              title: { text: "SHAP value" },
+              zerolinecolor: "#475569",
+            },
+            yaxis: { automargin: true },
+            margin: { t: 10, b: 40, l: 150, r: 20 },
+          }}
+          config={{ displayModeBar: false, responsive: true }}
+          style={{ width: "100%" }}
+        />
+      </div>
     </div>
   );
 }

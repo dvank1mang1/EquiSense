@@ -29,7 +29,7 @@ class FeatureStore:
         {data_root}/processed/{TICKER}/technical.parquet
         {data_root}/processed/{TICKER}/fundamental.parquet
         data/processed/{TICKER}/sentiment.parquet
-        data/processed/{TICKER}/combined.parquet
+        (combined.parquet не пишется ETL — combined собирается в памяти через build_combined.)
     """
 
     def __init__(self, data_root: Path | None = None) -> None:

@@ -17,6 +17,7 @@ if str(BACKEND_ROOT) not in sys.path:
 load_dotenv(BACKEND_ROOT / ".env")
 
 from app.core.config import settings
+from app.core.logging import setup_logging
 from app.data.fundamental_data import FundamentalDataClient
 from app.data.market_data import MarketDataClient
 from app.data.news_data import NewsDataClient
@@ -44,6 +45,13 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
         return False
     payload = item.payload
     job_type = str(payload.get("type", "refresh_universe"))
+    job_logger = logger.bind(
+        worker_id=worker_id,
+        run_id=item.run_id,
+        job_type=job_type,
+        request_id=item.run_id,
+    )
+    job_logger.info("Claimed job for processing")
 
     # Shared adapters
     market_client = MarketDataClient(http=http)
@@ -82,8 +90,10 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
                 )
                 await asyncio.to_thread(backtest_store.save, item.run_id, resp)
                 await asyncio.to_thread(queue.mark_completed, item.run_id)
+                job_logger.info("Backtest job completed")
             except (BacktestDependencyError, BacktestInputError) as e:
                 await asyncio.to_thread(queue.mark_failed, item.run_id, str(e))
+                job_logger.warning("Backtest job failed: {}", str(e))
         else:
             await orchestrator.run(
                 tickers=[str(t).strip().upper() for t in payload.get("tickers", [])],
@@ -95,6 +105,7 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
                 refresh_news=bool(payload.get("refresh_news", False)),
             )
             await asyncio.to_thread(queue.mark_completed, item.run_id)
+            job_logger.info("Refresh job completed")
     except asyncio.CancelledError:
         await asyncio.to_thread(
             queue.requeue_run,
@@ -104,7 +115,7 @@ async def _run_once(http: httpx.AsyncClient, queue: PostgresJobQueue) -> bool:
         raise
     except Exception as e:  # noqa: BLE001
         await asyncio.to_thread(queue.mark_failed, item.run_id, str(e))
-        logger.exception("Worker failed run_id={} error={}", item.run_id, e)
+        job_logger.exception("Worker failed: {}", e)
     finally:
         stop_heartbeat.set()
         hb_task.cancel()
@@ -135,6 +146,7 @@ async def _main_loop(poll_sec: float) -> None:
 
 
 def main() -> None:
+    setup_logging()
     parser = argparse.ArgumentParser(description="Run background job worker loop")
     parser.add_argument("--poll-sec", type=float, default=1.0)
     args = parser.parse_args()

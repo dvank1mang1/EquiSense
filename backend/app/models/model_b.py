@@ -25,6 +25,7 @@ class ModelB(BaseMLModel):
             max_depth=5,
             learning_rate=0.05,
             random_state=42,
+            verbosity=-1,
         )
 
     def train(self, X: pd.DataFrame, y: pd.Series) -> None:

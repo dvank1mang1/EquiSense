@@ -64,7 +64,11 @@ class BacktestStore:
         )
         path = self.result_path(run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(record), ensure_ascii=False), encoding="utf-8")
+        blob = asdict(record)
+        blob["start_date"] = record.start_date.isoformat()
+        blob["end_date"] = record.end_date.isoformat()
+        blob["model"] = str(record.model)
+        path.write_text(json.dumps(blob, ensure_ascii=False), encoding="utf-8")
         return path
 
     def load(self, run_id: str) -> BacktestResponse | None:

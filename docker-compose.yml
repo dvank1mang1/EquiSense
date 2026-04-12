@@ -26,6 +26,11 @@ services:
     environment:
       POSTGRES_HOST: postgres
       JOB_QUEUE_BACKEND: postgres
+      # Явная подстановка из .env у корня репо (рядом с compose); иначе exec-скрипты не видят ключ.
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+      STOOQ_API_KEY: ${STOOQ_API_KEY:-}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      NEWS_API_KEY: ${NEWS_API_KEY:-}
     volumes:
       - ./backend:/app
       - backend_venv:/app/.venv
@@ -47,6 +52,10 @@ services:
     environment:
       POSTGRES_HOST: postgres
       JOB_QUEUE_BACKEND: postgres
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+      STOOQ_API_KEY: ${STOOQ_API_KEY:-}
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      NEWS_API_KEY: ${NEWS_API_KEY:-}
     volumes:
       - ./backend:/app
       - worker_venv:/app/.venv
@@ -69,7 +78,8 @@ services:
       - /app/node_modules
       - /app/.next
     ports:
-      - "3000:3000"
+      # Host 3002 avoids clash with local `npm run dev` on 3000
+      - "3002:3000"
     depends_on:
       - backend
 
@@ -78,6 +88,7 @@ services:
     container_name: equisense_prometheus
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts:/etc/prometheus/alerts:ro
     ports:
       - "9090:9090"
     depends_on:

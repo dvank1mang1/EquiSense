@@ -1,0 +1,49 @@
+groups:
+  - name: equisense-slo-http
+    interval: 30s
+    rules:
+      - alert: EquiSenseApi5xxErrorBudgetBurn
+        expr: |
+          (
+            sum(rate(http_requests_total{job="equisense-backend",status=~"5.."}[15m]))
+            /
+            clamp_min(sum(rate(http_requests_total{job="equisense-backend"}[15m])), 1e-9)
+          ) > 0.01
+        for: 15m
+        labels:
+          severity: warning
+          slo: error-budget
+        annotations:
+          summary: "API 5xx ratio exceeds 1% for 15 minutes"
+          description: "SLO breach risk: 5xx rate is above the 1% error budget threshold."
+
+      - alert: EquiSensePredictionP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{job="equisense-backend",handler=~"/api/v1/predictions.*"}[10m])
+            )
+          ) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+          slo: prediction-latency
+        annotations:
+          summary: "Prediction latency p95 above 1.5s"
+          description: "Prediction endpoint p95 latency is above SLO for more than 10 minutes."
+
+      - alert: EquiSensePredictionErrorRateHigh
+        expr: |
+          (
+            sum(rate(http_requests_total{job="equisense-backend",handler=~"/api/v1/predictions.*",status!~"2.."}[15m]))
+            /
+            clamp_min(sum(rate(http_requests_total{job="equisense-backend",handler=~"/api/v1/predictions.*"}[15m])), 1e-9)
+          ) > 0.02
+        for: 15m
+        labels:
+          severity: warning
+          slo: prediction-availability
+        annotations:
+          summary: "Prediction non-2xx ratio above 2%"
+          description: "Prediction endpoint error ratio is above alerting baseline."

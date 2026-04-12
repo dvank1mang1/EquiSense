@@ -51,7 +51,8 @@ async def _resolve_model_selector(model: str, training: TrainingService) -> _Mod
     raw = model.strip().lower()
     try:
         mid = ModelId(raw)
-        return _ModelSelection(model_id=mid, champion_run_id=None, artifact_path=None)
+        apath, rid = await training.resolve_inference_artifact(mid)
+        return _ModelSelection(model_id=mid, champion_run_id=rid, artifact_path=apath)
     except ValueError:
         pass
 
@@ -105,7 +106,7 @@ async def get_prediction(
     selection = await _resolve_model_selector(model, training)
     try:
         outcome = await service.predict(
-            ticker, selection.model_id, artifact_path=selection.artifact_path
+            sym, selection.model_id, artifact_path=selection.artifact_path
         )
     except UnknownModelError as e:
         logger.warning("predictions.get unknown_model ticker={} model={} err={}", sym, model, e)
@@ -149,14 +150,17 @@ async def get_prediction(
 async def compare_models(
     ticker: str,
     service: PredictionService = Depends(get_prediction_service),
+    training: TrainingService = Depends(get_training_service),
 ):
     """Сравнение rollout-моделей (A–F) по сигналам и вероятности."""
     sym = ticker.strip().upper()
     logger.info("predictions.compare start ticker={}", sym)
     comparison: dict[str, dict[str, Any]] = {}
     for mid in ROLLOUT_MODEL_IDS:
+        apath, _rid = await training.resolve_inference_artifact(mid)
+        offline = await training.offline_metrics_for_ticker_model(mid, sym)
         try:
-            out = await service.predict(sym, mid)
+            out = await service.predict(sym, mid, artifact_path=apath)
             sig: Signal | None = None
             if out.signal:
                 try:
@@ -168,9 +172,10 @@ async def compare_models(
                 "signal": sig.value if sig is not None else out.signal,
                 "probability": out.probability,
                 "confidence": out.confidence,
-                # Placeholder for future offline evaluation registry.
-                "f1": None,
-                "roc_auc": None,
+                "f1": offline["f1"],
+                "roc_auc": offline["roc_auc"],
+                "precision": offline["precision"],
+                "recall": offline["recall"],
                 "error": None,
             }
         except (UnknownModelError, ModelArtifactMissingError, FeatureDataMissingError) as e:
@@ -179,8 +184,10 @@ async def compare_models(
                 "signal": None,
                 "probability": None,
                 "confidence": None,
-                "f1": None,
-                "roc_auc": None,
+                "f1": offline["f1"],
+                "roc_auc": offline["roc_auc"],
+                "precision": offline["precision"],
+                "recall": offline["recall"],
                 "error": str(e),
             }
             logger.warning(
@@ -195,8 +202,10 @@ async def compare_models(
                 "signal": None,
                 "probability": None,
                 "confidence": None,
-                "f1": None,
-                "roc_auc": None,
+                "f1": offline["f1"],
+                "roc_auc": offline["roc_auc"],
+                "precision": offline["precision"],
+                "recall": offline["recall"],
                 "error": f"internal_error: {e}",
             }
             logger.exception(
@@ -224,9 +233,11 @@ async def get_shap_explanation(
     model: ModelId = Query(default=ModelId.MODEL_D),
     top_n: int = Query(default=10, ge=1, le=50),
     shap_svc: ShapService = Depends(get_shap_service),
+    training: TrainingService = Depends(get_training_service),
 ):
     try:
-        outcome = await shap_svc.explain(ticker, model, top_n=top_n)
+        apath, _rid = await training.resolve_inference_artifact(model)
+        outcome = await shap_svc.explain(ticker, model, top_n=top_n, artifact_path=apath)
     except ModelArtifactMissingError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except FeatureDataMissingError as e:
@@ -258,7 +269,7 @@ async def get_prediction_readiness(
     sym = ticker.strip().upper()
     logger.info("predictions.readiness start ticker={} model={}", sym, model)
     selection = await _resolve_model_selector(model, training)
-    out = await service.readiness(ticker, selection.model_id, artifact_path=selection.artifact_path)
+    out = await service.readiness(sym, selection.model_id, artifact_path=selection.artifact_path)
     checks = {
         k: ReadinessCheck(ok=bool(v.get("ok", False)), detail=str(v.get("detail", "")))
         for k, v in out.checks.items()
@@ -339,11 +350,11 @@ async def ensure_prediction_ready(
     )
     selection = await _resolve_model_selector(model, training)
     before = await service.readiness(
-        ticker, selection.model_id, artifact_path=selection.artifact_path
+        sym, selection.model_id, artifact_path=selection.artifact_path
     )
     run_id = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     status_path, lineage_path = await orchestrator.run(
-        tickers=[ticker.strip().upper()],
+        tickers=[sym],
         run_id=run_id,
         force_full=body.force_full,
         refresh_quote=body.refresh_quote,
@@ -351,7 +362,7 @@ async def ensure_prediction_ready(
         run_etl=body.run_etl,
     )
     after = await service.readiness(
-        ticker, selection.model_id, artifact_path=selection.artifact_path
+        sym, selection.model_id, artifact_path=selection.artifact_path
     )
     checks_before = {
         k: ReadinessCheck(ok=bool(v.get("ok", False)), detail=str(v.get("detail", "")))
@@ -405,7 +416,7 @@ async def get_prediction_status(
     sym = ticker.strip().upper()
     logger.info("predictions.status start ticker={} model={}", sym, model)
     selection = await _resolve_model_selector(model, training)
-    out = await service.readiness(ticker, selection.model_id, artifact_path=selection.artifact_path)
+    out = await service.readiness(sym, selection.model_id, artifact_path=selection.artifact_path)
     checks = out.checks
     freshness: dict[str, dict[str, object]] = {}
     for key in (

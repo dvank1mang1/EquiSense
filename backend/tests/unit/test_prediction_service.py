@@ -105,6 +105,7 @@ class TestPredictionServiceInference:
             class _M:
                 model_id = "model_a"
                 feature_set = TECHNICAL_FEATURES
+                model_path = "data/models/model_a.joblib"
 
                 def load(self, artifact_path=None) -> None:
                     _ = artifact_path

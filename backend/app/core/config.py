@@ -1,15 +1,40 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# backend/app/core/config.py → каталог backend
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_REPO_ROOT = _BACKEND_DIR.parent
+
+
+def _env_file_chain() -> tuple[Path | str, ...]:
+    """
+    Сначала .env у корня репозитория (как у docker compose), затем backend/.env.
+    В контейнере корень репо обычно не смонтирован — тогда остаётся только backend/.env или cwd .env.
+    """
+    files: list[Path] = []
+    repo_env = _REPO_ROOT / ".env"
+    if repo_env.is_file():
+        files.append(repo_env)
+    back_env = _BACKEND_DIR / ".env"
+    if back_env.is_file():
+        files.append(back_env)
+    return tuple(files) if files else (".env",)
+
+
+_ENV_FILES = _env_file_chain()
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
         case_sensitive=False,
         protected_namespaces=("settings_",),
+        # Корневой .env (docker-compose) задаёт DATABASE_URL, NEXT_PUBLIC_*, Grafana — не поля этого класса.
+        extra="ignore",
     )
 
     # App
@@ -51,6 +76,8 @@ class Settings(BaseSettings):
     alpha_vantage_api_key: str = ""
     finnhub_api_key: str = ""
     news_api_key: str = ""
+    # Тональность FinBERT для GET /stocks/.../news (первый запрос грузит модель; отключить: false)
+    news_finbert_enabled: bool = True
     # Alpha Vantage free tier ~5 calls/min — pace all AV endpoints with one limiter
     alpha_vantage_min_interval_sec: float = 12.0
     ohlcv_parquet_cache_max_age_sec: int = 86400
@@ -90,8 +117,13 @@ class Settings(BaseSettings):
     finbert_device: str = "auto"
     finbert_batch_size: int = 16
 
-    # CORS
-    allowed_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # CORS (include Docker frontend on 3002 when host :3000 is busy)
+    allowed_origins: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+    ]
 
 
 @lru_cache

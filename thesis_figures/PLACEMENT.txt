@@ -6,10 +6,10 @@ Suggested order in the thesis (Results / Extended Results):
 2) sharpe_comparison.png
    — Immediately after the strategy table (quick risk-adjusted read).
 
-3) quantile_returns.png
+3) quantile_returns.png (alias: quantile_plot.png for LaTeX)
    — After the paragraph explaining evaluation via ranking, not single-threshold AUC.
 
-4) cumulative_returns_by_quantile.png
+4) cumulative_returns_by_quantile.png (alias: cum_returns.png for LaTeX)
    — After quantile_returns.png (time-series evidence).
 
 5) ic_vs_precision.png

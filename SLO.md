@@ -48,6 +48,14 @@ This document defines service-level targets for the current stage of the platfor
   - `dead_letter > 0` for 10 minutes
   - queue failure rate > 10% for 15 minutes
 
+## Prometheus/Grafana Mapping
+
+- API request/error SLI panels and alerts use `http_requests_total` from FastAPI instrumentation.
+- Latency SLI panels and alerts use `http_request_duration_seconds_bucket` with `histogram_quantile`.
+- Current dashboard/alerts are scoped to `job="equisense-backend"` to avoid mixing with non-API targets.
+- Prediction-specific SLO widgets rely on `handler=~"/api/v1/predictions.*"` labels.
+- Queue SLOs (`dead_letter`, `stale_running`) remain document-level targets until dedicated Prometheus metrics are exposed.
+
 ## Notes
 
 - These targets are baseline and should evolve with production usage.

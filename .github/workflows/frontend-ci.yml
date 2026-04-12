@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   lint-and-build:
@@ -30,6 +31,17 @@ jobs:
         run: npm run lint
         env:
           NEXT_TELEMETRY_DISABLED: 1
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test
+
+      # Non-blocking until advisories are triaged; remove continue-on-error to enforce zero high+.
+      - name: Dependency audit (high+)
+        run: npm audit --audit-level=high
+        continue-on-error: true
 
       - name: Production build
         run: npm run build

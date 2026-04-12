@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+from app.domain.identifiers import FeatureSlice
 from app.services.backtesting_service import BacktestingService
 from app.services.dependencies import get_backtesting_service
 
@@ -212,14 +213,14 @@ def test_backtest_preflight_http_returns_readiness(monkeypatch: pytest.MonkeyPat
         _no_cache,
     )
 
-    class _StoreNoCombined(_FakeStore):
+    class _StoreNoTechnical(_FakeStore):
         def exists(self, ticker: str, feature_type: str) -> bool:
             _ = ticker
-            return feature_type != "combined"
+            return feature_type != FeatureSlice.TECHNICAL.value
 
     app.dependency_overrides[get_backtesting_service] = lambda: BacktestingService(
         market=_FakeMarket(),
-        features=_StoreNoCombined(),
+        features=_StoreNoTechnical(),
     )
     try:
         client = TestClient(app)
@@ -230,6 +231,7 @@ def test_backtest_preflight_http_returns_readiness(monkeypatch: pytest.MonkeyPat
         assert payload["ready"] is False
         assert payload["has_cached_ohlcv"] is False
         assert payload["has_combined_features"] is False
+        assert payload.get("has_processed_technical") is False
     finally:
         app.dependency_overrides.clear()
 
@@ -242,7 +244,9 @@ def test_backtest_http_fails_without_cache_when_network_fallback_disabled(
     from main import app
 
     old_flag = settings.backtest_allow_network_fallback
+    old_av = settings.alpha_vantage_api_key
     settings.backtest_allow_network_fallback = False
+    settings.alpha_vantage_api_key = ""
 
     async def _no_cache(ticker: str):
         _ = ticker
@@ -264,6 +268,7 @@ def test_backtest_http_fails_without_cache_when_network_fallback_disabled(
         assert "No cached OHLCV for backtest" in r.text
     finally:
         settings.backtest_allow_network_fallback = old_flag
+        settings.alpha_vantage_api_key = old_av
         app.dependency_overrides.clear()
 
 
@@ -289,3 +294,15 @@ def test_backtest_job_status_failed_returns_payload(monkeypatch: pytest.MonkeyPa
         assert payload["job_id"] == "failing-job"
         assert payload["status"] == "failed"
         assert "error" in payload
+
+
+@pytest.mark.integration
+def test_list_backtest_jobs_rejects_unknown_status_filter() -> None:
+    from main import app
+
+    with TestClient(app) as client:
+        r = client.get("/api/v1/backtesting/jobs?status=done")
+        assert r.status_code == 422
+        payload = r.json()
+        assert payload["error"]["code"] == "http_422"
+        assert "invalid status filter" in payload["error"]["message"].lower()

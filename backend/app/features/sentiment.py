@@ -233,3 +233,21 @@ class SentimentFeatureEngineer:
             }
         )
         return out_df.reset_index(drop=True)
+
+
+def attach_finbert_to_news_items(items: list[dict[str, Any]]) -> None:
+    """Для API-ленты: FinBERT по заголовку+анонсу → поля sentiment, sentiment_score (in-place)."""
+    if not items:
+        return
+    pending: list[int] = []
+    for i, it in enumerate(items):
+        if it.get("sentiment") is None:
+            pending.append(i)
+    if not pending:
+        return
+    eng = SentimentFeatureEngineer()
+    texts = [_article_text(items[i]).strip() or " " for i in pending]
+    scored = eng.score_batch(texts)
+    for i, sc in zip(pending, scored, strict=True):
+        items[i]["sentiment"] = sc["label"]
+        items[i]["sentiment_score"] = round(float(sc["score"]), 4)

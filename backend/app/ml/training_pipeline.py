@@ -11,6 +11,15 @@ from sklearn.pipeline import Pipeline
 from app.models.base import BaseMLModel
 
 
+def _fill_all_nan_feature_columns(x: pd.DataFrame, *, fill_value: float = 0.0) -> pd.DataFrame:
+    """Колонки целиком из NaN (часто fundamental при демо-ETL) ломают median-imputer; подставляем константу."""
+    out = x.copy()
+    for col in out.columns:
+        if out[col].notna().sum() == 0:
+            out[col] = fill_value
+    return out
+
+
 def _scale_pos_weight(y: pd.Series) -> float:
     yv = np.asarray(y).astype(int)
     n_pos = int((yv == 1).sum())
@@ -41,7 +50,8 @@ def _apply_balance_to_leaf(est: object, y: pd.Series) -> None:
         from lightgbm import LGBMClassifier
 
         if isinstance(est, LGBMClassifier):
-            est.set_params(scale_pos_weight=w)
+            est.set_params(scale_pos_weight=w, verbosity=-1)
+            return
     except (ImportError, OSError, ValueError):
         pass
 
@@ -67,7 +77,7 @@ def fit_production_pipeline(
     prepend a median imputer.
     """
     feats = instance.feature_set
-    x_fit = x_train[feats]
+    x_fit = _fill_all_nan_feature_columns(x_train[feats])
     inner = instance.model
 
     if isinstance(inner, Pipeline) and "lr" in inner.named_steps:

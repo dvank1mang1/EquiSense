@@ -3,18 +3,79 @@
 @tailwind utilities;
 
 @layer base {
-  body {
-    @apply bg-surface-900 text-slate-100 font-sans antialiased;
+  html {
+    @apply scroll-smooth;
   }
 
-  h1 { @apply text-3xl font-bold; }
-  h2 { @apply text-2xl font-semibold; }
-  h3 { @apply text-xl font-semibold; }
+  body {
+    @apply min-h-screen font-sans antialiased text-slate-100 leading-relaxed;
+    @apply bg-surface-950 bg-mesh-gradient;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  }
+
+  h1 {
+    @apply text-3xl font-bold tracking-tight text-slate-50;
+  }
+
+  h2 {
+    @apply text-2xl font-semibold tracking-tight text-slate-100;
+  }
+
+  h3 {
+    @apply text-xl font-semibold tracking-tight text-slate-100;
+  }
+
+  ::selection {
+    @apply bg-brand-500/35 text-white;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme("colors.surface.600") theme("colors.surface.900");
+  }
+
+  *::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  *::-webkit-scrollbar-track {
+    @apply rounded-full bg-surface-900/80;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-surface-600/90 border-2 border-transparent bg-clip-padding;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    @apply bg-surface-500/90;
+  }
+
+  *::-webkit-scrollbar-corner {
+    @apply bg-transparent;
+  }
 }
 
 @layer components {
   .card {
-    @apply bg-surface-800 rounded-xl border border-surface-700 p-5;
+    @apply rounded-xl border border-surface-700/80 bg-surface-800/90 p-5 shadow-card backdrop-blur-sm;
+    @apply transition-shadow duration-250 ease-out-soft;
+  }
+
+  .glass-card {
+    @apply rounded-xl border border-white/[0.08] bg-surface-800/55 p-5 shadow-card backdrop-blur-md;
+    @apply transition-[box-shadow,background-color,border-color] duration-250 ease-out-soft;
+  }
+
+  .glass-card:hover {
+    @apply border-white/[0.12] bg-surface-800/70 shadow-card-hover;
+  }
+
+  .section-title {
+    @apply text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-slate-500;
+  }
+
+  .section-title-accent {
+    @apply text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-brand-400/90;
   }
 
   .badge-buy {
@@ -30,6 +91,33 @@
   }
 
   .btn-primary {
-    @apply px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg font-medium transition-colors;
+    @apply px-4 py-2 bg-brand-600 hover:bg-brand-500 active:bg-brand-700 text-white rounded-lg font-medium;
+    @apply shadow-glow-sm hover:shadow-glow-md transition-[background-color,box-shadow,color] duration-250 ease-out-soft;
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400;
+    @apply focus-visible:ring-offset-2 focus-visible:ring-offset-surface-950;
+  }
+
+  /* Бегущая строка новостей */
+  @keyframes news-marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  .news-marquee-track {
+    animation: news-marquee 52s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .news-marquee-track {
+      animation: none;
+    }
+  }
+
+  .news-marquee-hover:hover .news-marquee-track {
+    animation-play-state: paused;
   }
 }

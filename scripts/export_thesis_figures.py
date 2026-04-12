@@ -24,6 +24,15 @@ def _copy_if_exists(name: str) -> None:
     (OUT / name).write_bytes(src.read_bytes())
 
 
+def _copy_alias(src_name: str, dest_name: str) -> None:
+    """Same image under a LaTeX-friendly filename (e.g. quantile_plot.png)."""
+    src = SRC / src_name
+    if not src.is_file():
+        raise FileNotFoundError(f"Missing source file: {src}")
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / dest_name).write_bytes(src.read_bytes())
+
+
 def _build_strategy_table_md() -> None:
     clean = pd.read_csv(OUT / "strategy_comparison_clean.csv")
     # Readable numeric formatting for thesis paste-in
@@ -96,6 +105,9 @@ def main() -> None:
         "strategy_comparison_clean.csv",
     ):
         _copy_if_exists(name)
+    # Names expected by typical thesis LaTeX \includegraphics{...}
+    _copy_alias("quantile_returns.png", "quantile_plot.png")
+    _copy_alias("cumulative_returns_by_quantile.png", "cum_returns.png")
     _build_strategy_table_md()
     _build_long_short_cumulative()
     print(f"Thesis figures ready in: {OUT}")

@@ -45,6 +45,7 @@ dependencies = [
     "optuna>=4.8.0",
     "pandas-datareader>=0.10.0",
     "nbformat>=5.10.4",
+    "greenlet>=3.3.2",
 ]
 
 [dependency-groups]
