@@ -33,10 +33,21 @@ export const MODEL_LABELS_LONG: Record<string, string> = {
   model_f: "F: Voting XGB + LightGBM (all features)",
 };
 
-/** Rule baselines for backtesting (no ML weights). */
-export const BACKTEST_BASELINE_IDS = ["baseline_buy_hold", "baseline_ma_200"] as const;
+/** Rule strategies (API / suite); legacy ids still accepted by backend. */
+export const BACKTEST_BASELINE_IDS = [
+  "buy_and_hold",
+  "momentum_top_k",
+  "mean_reversion_volume",
+  "trend_filter",
+  "baseline_ma_200",
+  "baseline_buy_hold",
+] as const;
 
 export const BACKTEST_BASELINE_LABELS: Record<string, string> = {
-  baseline_buy_hold: "Buy & hold (full long)",
-  baseline_ma_200: "MA(200) trend filter (long when close > MA)",
+  buy_and_hold: "Buy & hold (benchmark)",
+  momentum_top_k: "Momentum (60d, single-name)",
+  mean_reversion_volume: "Mean reversion (volume spike)",
+  trend_filter: "Trend filter (SMA50)",
+  baseline_ma_200: "Trend filter (SMA200)",
+  baseline_buy_hold: "Buy & hold (legacy id)",
 };

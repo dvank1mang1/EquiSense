@@ -18,6 +18,9 @@ from app.schemas.backtest import (
     BacktestMetrics,
     BacktestResponse,
     BacktestRunJobBody,
+    EquityPoint,
+    StrategySuiteResponse,
+    SuiteStrategyEntry,
 )
 from app.schemas.common import ErrorResponse
 from app.services.backtesting_service import BacktestingService
@@ -151,6 +154,62 @@ async def preflight_backtest_ticker(
 
 
 @router.get(
+    "/{ticker}/suite",
+    response_model=StrategySuiteResponse,
+    summary="Baselines + ML backtests with equity curves (single response for chart toggles)",
+)
+async def strategy_suite(
+    ticker: str,
+    start_date: date | None = Query(None, description="YYYY-MM-DD"),
+    end_date: date | None = Query(None, description="YYYY-MM-DD"),
+    initial_capital: float = Query(10000.0, ge=100),
+    include_ml: str = Query(
+        "model_d",
+        description="model_d | none | all | comma-separated ids (e.g. model_a,model_d)",
+    ),
+    service: BacktestingService = Depends(get_backtesting_service),
+):
+    sym = ticker.strip().upper()
+    logger.info(
+        "backtesting.suite start ticker={} include_ml={} start={} end={}",
+        sym,
+        include_ml,
+        start_date,
+        end_date,
+    )
+    raw = await service.compare_strategy_suite(
+        ticker=ticker,
+        start_date=start_date,
+        end_date=end_date,
+        initial_capital=initial_capital,
+        include_ml=include_ml,
+    )
+    strategies: dict[str, SuiteStrategyEntry] = {}
+    for k, v in raw.items():
+        met = v.get("metrics")
+        metrics_obj = BacktestMetrics(**met) if met is not None else None
+        curve_raw = v.get("equity_curve") or []
+        curve = [EquityPoint(**p) for p in curve_raw] if curve_raw else None
+        strategies[k] = SuiteStrategyEntry(
+            group=v["group"],
+            label=v["label"],
+            ok=bool(v["ok"]),
+            metrics=metrics_obj,
+            equity_curve=curve,
+            error=v.get("error"),
+        )
+    resp = StrategySuiteResponse(
+        ticker=sym,
+        initial_capital=initial_capital,
+        start_date=start_date,
+        end_date=end_date,
+        strategies=strategies,
+    )
+    logger.info("backtesting.suite done ticker={} n_strategies={}", sym, len(strategies))
+    return resp
+
+
+@router.get(
     "/{ticker}",
     response_model=BacktestResponse,
     summary="Run model backtest for one ticker",
@@ -193,7 +252,7 @@ async def run_backtest(
     ticker: str,
     model: str = Query(
         ModelId.MODEL_D.value,
-        description="Rollout model id (model_a..model_f) or baseline_buy_hold / baseline_ma_200",
+        description="Rollout model id or rule strategy: buy_and_hold, momentum_top_k, mean_reversion_volume, trend_filter, baseline_ma_200, baseline_buy_hold",
     ),
     start_date: date | None = Query(None, description="YYYY-MM-DD"),
     end_date: date | None = Query(None, description="YYYY-MM-DD"),

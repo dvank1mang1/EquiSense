@@ -196,7 +196,10 @@ def test_compare_backtest_models_http_returns_ok_flags(monkeypatch: pytest.Monke
         assert payload["ticker"] == "AAPL"
         assert payload["comparison"]["model_a"]["ok"] is True
         assert payload["comparison"]["model_d"]["ok"] is True
-        assert payload["comparison"]["baseline_buy_hold"]["ok"] is True
+        assert payload["comparison"]["buy_and_hold"]["ok"] is True
+        assert payload["comparison"]["momentum_top_k"]["ok"] is True
+        assert payload["comparison"]["mean_reversion_volume"]["ok"] is True
+        assert payload["comparison"]["trend_filter"]["ok"] is True
         assert payload["comparison"]["baseline_ma_200"]["ok"] is True
     finally:
         app.dependency_overrides.clear()
@@ -308,3 +311,110 @@ def test_list_backtest_jobs_rejects_unknown_status_filter() -> None:
         payload = r.json()
         assert payload["error"]["code"] == "http_422"
         assert "invalid status filter" in payload["error"]["message"].lower()
+
+
+@pytest.mark.integration
+def test_strategy_suite_http_returns_curves(monkeypatch: pytest.MonkeyPatch) -> None:
+    from main import app
+
+    n = 120
+    dates = pd.date_range("2024-01-01", periods=n, freq="D")
+    close = pd.Series(np.linspace(100.0, 130.0, n)) + np.sin(np.linspace(0, 6, n)) * 2.0
+    vol = pd.Series(np.linspace(1e6, 2e6, n))
+
+    async def _fake_read(ticker: str, *, root=None):
+        _ = ticker, root
+        return pd.DataFrame({"date": dates, "close": close.values, "volume": vol.values.astype(int)})
+
+    class _Store120(_FakeStore):
+        def build_combined(self, ticker: str) -> pd.DataFrame:
+            _ = ticker
+            rows = []
+            for d in dates:
+                row = {"date": d}
+                for col in (
+                    "returns",
+                    "volatility",
+                    "rsi",
+                    "macd",
+                    "macd_signal",
+                    "macd_hist",
+                    "sma_20",
+                    "sma_50",
+                    "sma_200",
+                    "bb_upper",
+                    "bb_lower",
+                    "bb_width",
+                    "momentum",
+                    "pe_ratio",
+                    "eps",
+                    "revenue_growth",
+                    "roe",
+                    "debt_to_equity",
+                    "sentiment_score",
+                    "news_count",
+                    "positive_ratio",
+                    "negative_ratio",
+                    "sentiment_std",
+                ):
+                    row[col] = 0.1
+                rows.append(row)
+            return pd.DataFrame(rows)
+
+    class _Model:
+        model_id = "model_d"
+        feature_set = [
+            "returns",
+            "volatility",
+            "rsi",
+            "macd",
+            "macd_signal",
+            "macd_hist",
+            "sma_20",
+            "sma_50",
+            "sma_200",
+            "bb_upper",
+            "bb_lower",
+            "bb_width",
+            "momentum",
+            "pe_ratio",
+            "eps",
+            "revenue_growth",
+            "roe",
+            "debt_to_equity",
+            "sentiment_score",
+            "news_count",
+            "positive_ratio",
+            "negative_ratio",
+            "sentiment_std",
+        ]
+
+        def load(self) -> None:
+            pass
+
+        def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+            _ = X
+            return np.array([[0.4, 0.6]] * len(X))
+
+        def get_signal(self, p: float) -> str:
+            return "Buy" if p >= 0.55 else "Hold"
+
+    monkeypatch.setattr("app.services.backtesting_service.read_ohlcv_parquet", _fake_read)
+    monkeypatch.setattr("app.services.backtesting_service.get_model_class", lambda model_id: _Model)
+    app.dependency_overrides[get_backtesting_service] = lambda: BacktestingService(
+        market=_FakeMarketShouldNotBeCalled(),
+        features=_Store120(),
+    )
+    try:
+        client = TestClient(app)
+        r = client.get("/api/v1/backtesting/ZZZ/suite", params={"include_ml": "model_d"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ticker"] == "ZZZ"
+        assert "buy_and_hold" in body["strategies"]
+        assert body["strategies"]["buy_and_hold"]["ok"] is True
+        assert body["strategies"]["buy_and_hold"]["equity_curve"]
+        assert body["strategies"]["model_d"]["ok"] is True
+        assert body["strategies"]["model_d"]["equity_curve"]
+    finally:
+        app.dependency_overrides.clear()

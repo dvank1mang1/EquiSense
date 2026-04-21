@@ -6,7 +6,12 @@ from datetime import date
 
 import pandas as pd
 
-from app.backtesting.baseline_signals import baseline_predictions_for, is_baseline_strategy
+from app.backtesting.baseline_signals import (
+    CANONICAL_RULE_STRATEGY_IDS,
+    is_rule_backtest_strategy,
+    rule_strategy_predictions,
+    suite_strategy_label,
+)
 from app.backtesting.engine import BacktestEngine
 from app.contracts.data_providers import MarketDataProvider
 from app.contracts.features import FeatureStorePort
@@ -17,6 +22,19 @@ from app.domain.exceptions import BacktestDependencyError, BacktestInputError
 from app.domain.identifiers import ROLLOUT_MODEL_IDS, FeatureSlice, ModelId
 from app.models import get_model_class
 from app.schemas.backtest import BacktestMetrics, BacktestResponse, EquityPoint
+
+
+def _ml_suite_label(model_id: str) -> str:
+    m = model_id.strip().lower()
+    names = {
+        "model_a": "ML A (technical)",
+        "model_b": "ML B (tech + fund)",
+        "model_c": "ML C (tech + news)",
+        "model_d": "ML D (all features)",
+        "model_e": "ML E (HGBM all)",
+        "model_f": "ML F (voting)",
+    }
+    return names.get(m, f"ML {m}")
 
 
 def _backtest_remote_ohlcv_allowed() -> bool:
@@ -133,15 +151,20 @@ class BacktestingService:
             raw_price = await self._market.get_daily_ohlcv(
                 ticker, output_size="full", skip_cache=False
             )
-        price_df = raw_price[["date", "close"]].copy()
-        price_df["date"] = pd.to_datetime(price_df["date"])
+        ohlcv = raw_price.copy()
+        ohlcv["date"] = pd.to_datetime(ohlcv["date"])
+        if "volume" not in ohlcv.columns:
+            ohlcv["volume"] = 0.0
+        else:
+            ohlcv["volume"] = pd.to_numeric(ohlcv["volume"], errors="coerce").fillna(0.0)
+        price_df = ohlcv[["date", "close"]].copy()
 
-        if is_baseline_strategy(model_key):
+        if is_rule_backtest_strategy(model_key):
             return await asyncio.to_thread(
-                self._run_baseline_cpu,
+                self._run_rule_strategy_cpu,
                 sym,
                 model_key,
-                price_df,
+                ohlcv,
                 start_date,
                 end_date,
                 initial_capital,
@@ -232,16 +255,16 @@ class BacktestingService:
             equity_curve=curve,
         )
 
-    def _run_baseline_cpu(
+    def _run_rule_strategy_cpu(
         self,
         sym: str,
         strategy_id: str,
-        price_df: pd.DataFrame,
+        ohlcv: pd.DataFrame,
         start_date: date | None,
         end_date: date | None,
         initial_capital: float,
     ) -> BacktestResponse:
-        p = price_df.copy()
+        p = ohlcv.copy()
         p["date"] = pd.to_datetime(p["date"])
         if start_date is not None:
             dt = pd.Timestamp(start_date.isoformat())
@@ -251,9 +274,10 @@ class BacktestingService:
             p = p[p["date"] <= dt].copy()
         if p.empty:
             raise BacktestInputError("No data in selected date range")
-        preds = baseline_predictions_for(strategy_id, p)
+        price_for_engine = p[["date", "close"]].copy()
+        preds = rule_strategy_predictions(strategy_id, p)
         engine = BacktestEngine(initial_capital=initial_capital)
-        out = engine.run(p, preds, ticker=sym, model_id=strategy_id)
+        out = engine.run(price_for_engine, preds, ticker=sym, model_id=strategy_id)
         curve = [
             EquityPoint(
                 date=pd.Timestamp(r["date"]).date(),
@@ -356,9 +380,107 @@ class BacktestingService:
                 row = BacktestCompareRow(model=bid, ok=False, error=str(e))
             return bid, row
 
-        base_pairs = await asyncio.gather(
-            _baseline_row("baseline_buy_hold"),
-            _baseline_row("baseline_ma_200"),
-        )
+        rule_ids = list(CANONICAL_RULE_STRATEGY_IDS)
+        base_pairs = await asyncio.gather(*[_baseline_row(rid) for rid in rule_ids])
         out.update(dict(base_pairs))
+        return out
+
+    async def compare_strategy_suite(
+        self,
+        *,
+        ticker: str,
+        start_date: date | None,
+        end_date: date | None,
+        initial_capital: float,
+        include_ml: str = "model_d",
+    ) -> dict[str, dict]:
+        """
+        One-shot metrics + equity curves for rule strategies and selected ML models.
+
+        ``include_ml``: ``model_d`` | ``none`` | ``all`` | comma-separated model ids.
+        """
+
+        async def _rule_row(sid: str) -> tuple[str, dict]:
+            try:
+                res = await self.run_single(
+                    ticker=ticker,
+                    model=sid,
+                    start_date=start_date,
+                    end_date=end_date,
+                    initial_capital=initial_capital,
+                )
+                return sid, {
+                    "group": "baseline",
+                    "label": suite_strategy_label(sid),
+                    "ok": True,
+                    "metrics": res.metrics.model_dump(),
+                    "equity_curve": [pt.model_dump() for pt in res.equity_curve],
+                    "error": None,
+                }
+            except (BacktestDependencyError, BacktestInputError) as e:
+                return sid, {
+                    "group": "baseline",
+                    "label": suite_strategy_label(sid),
+                    "ok": False,
+                    "metrics": None,
+                    "equity_curve": None,
+                    "error": str(e),
+                }
+
+        rule_keys = list(CANONICAL_RULE_STRATEGY_IDS)
+        rule_part = await asyncio.gather(*[_rule_row(sid) for sid in rule_keys])
+        out: dict[str, dict] = {k: v for k, v in rule_part}
+
+        raw_ml = (include_ml or "model_d").strip().lower()
+        ml_ids: list[str] = []
+        if raw_ml == "none":
+            pass
+        elif raw_ml == "all":
+            ml_ids = [m.value for m in ROLLOUT_MODEL_IDS]
+        elif "," in raw_ml:
+            ml_ids = [x.strip() for x in raw_ml.split(",") if x.strip()]
+        else:
+            ml_ids = [raw_ml]
+
+        async def _ml_row(mid: str) -> tuple[str, dict]:
+            try:
+                _ = ModelId(mid)
+            except ValueError:
+                return mid, {
+                    "group": "ml",
+                    "label": _ml_suite_label(mid),
+                    "ok": False,
+                    "metrics": None,
+                    "equity_curve": None,
+                    "error": f"unknown model id: {mid!r}",
+                }
+            try:
+                res = await self.run_single(
+                    ticker=ticker,
+                    model=mid,
+                    start_date=start_date,
+                    end_date=end_date,
+                    initial_capital=initial_capital,
+                )
+                return mid, {
+                    "group": "ml",
+                    "label": _ml_suite_label(mid),
+                    "ok": True,
+                    "metrics": res.metrics.model_dump(),
+                    "equity_curve": [pt.model_dump() for pt in res.equity_curve],
+                    "error": None,
+                }
+            except (BacktestDependencyError, BacktestInputError) as e:
+                return mid, {
+                    "group": "ml",
+                    "label": _ml_suite_label(mid),
+                    "ok": False,
+                    "metrics": None,
+                    "equity_curve": None,
+                    "error": str(e),
+                }
+
+        if ml_ids:
+            ml_part = await asyncio.gather(*[_ml_row(m) for m in ml_ids])
+            out.update(dict(ml_part))
         return out

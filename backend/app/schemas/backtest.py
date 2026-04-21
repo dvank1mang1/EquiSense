@@ -3,23 +3,24 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
-from app.backtesting.baseline_signals import is_baseline_strategy
+from app.backtesting.baseline_signals import is_rule_backtest_strategy
 from app.domain.identifiers import ModelId
 
 
 def validate_backtest_model_id(v: str) -> str:
-    """Rollout ML ids or simple rule baselines (no joblib)."""
+    """Rollout ML ids or rule strategies (no joblib)."""
     s = str(v).strip()
     if not s:
         raise ValueError("model must be non-empty")
-    if is_baseline_strategy(s):
+    if is_rule_backtest_strategy(s):
         return s.lower()
     try:
         return ModelId(s).value
     except ValueError as e:
         raise ValueError(
             f"unknown backtest model or strategy: {v!r}; "
-            f"use a ModelId value or baseline_buy_hold / baseline_ma_200"
+            f"use ModelId (model_a..model_f) or rule id: "
+            f"buy_and_hold, momentum_top_k, mean_reversion_volume, trend_filter, baseline_ma_200, baseline_buy_hold"
         ) from e
 
 
@@ -68,6 +69,25 @@ class BacktestCompareEntry(BaseModel):
 class BacktestCompareResponse(BaseModel):
     ticker: str
     comparison: dict[str, BacktestCompareEntry]
+
+
+class SuiteStrategyEntry(BaseModel):
+    """One row in /backtesting/{ticker}/suite — metrics + optional equity curve."""
+
+    group: Literal["baseline", "ml"]
+    label: str
+    ok: bool
+    metrics: BacktestMetrics | None = None
+    equity_curve: list[EquityPoint] | None = None
+    error: str | None = None
+
+
+class StrategySuiteResponse(BaseModel):
+    ticker: str
+    initial_capital: float
+    start_date: date | None = None
+    end_date: date | None = None
+    strategies: dict[str, SuiteStrategyEntry]
 
 
 class BacktestJobPayload(BaseModel):
