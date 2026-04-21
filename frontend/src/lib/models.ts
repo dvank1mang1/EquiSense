@@ -32,3 +32,11 @@ export const MODEL_LABELS_LONG: Record<string, string> = {
   model_e: "E: HistGradientBoosting (all features)",
   model_f: "F: Voting XGB + LightGBM (all features)",
 };
+
+/** Rule baselines for backtesting (no ML weights). */
+export const BACKTEST_BASELINE_IDS = ["baseline_buy_hold", "baseline_ma_200"] as const;
+
+export const BACKTEST_BASELINE_LABELS: Record<string, string> = {
+  baseline_buy_hold: "Buy & hold (full long)",
+  baseline_ma_200: "MA(200) trend filter (long when close > MA)",
+};

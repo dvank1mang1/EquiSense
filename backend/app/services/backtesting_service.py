@@ -6,6 +6,7 @@ from datetime import date
 
 import pandas as pd
 
+from app.backtesting.baseline_signals import baseline_predictions_for, is_baseline_strategy
 from app.backtesting.engine import BacktestEngine
 from app.contracts.data_providers import MarketDataProvider
 from app.contracts.features import FeatureStorePort
@@ -80,7 +81,9 @@ class BacktestingService:
         has_technical = self._features.exists(sym, FeatureSlice.TECHNICAL.value)
         remote_ok = _backtest_remote_ohlcv_allowed()
 
-        ready = has_technical and (has_cached_ohlcv or remote_ok)
+        price_ready = has_cached_ohlcv or remote_ok
+        ready_ml = has_technical and price_ready
+        ready_baseline = price_ready
         reason = ""
         if not has_cached_ohlcv and not has_technical:
             reason = "нет кэшированного OHLCV и обработанных технических фич"
@@ -96,7 +99,8 @@ class BacktestingService:
 
         return {
             "ticker": sym,
-            "ready": ready,
+            "ready": ready_ml,
+            "ready_baseline": ready_baseline,
             "has_cached_ohlcv": has_cached_ohlcv,
             # Имя поля историческое: True, если можно собрать combined (есть technical.parquet).
             "has_combined_features": has_technical,
@@ -108,13 +112,14 @@ class BacktestingService:
         self,
         *,
         ticker: str,
-        model: ModelId,
+        model: str | ModelId,
         start_date: date | None,
         end_date: date | None,
         initial_capital: float,
     ) -> BacktestResponse:
         sym = ticker.strip().upper()
         sym_key = normalize_ticker(ticker)
+        model_key = model.value if isinstance(model, ModelId) else str(model).strip()
         # Local OHLCV first (see GET /stocks/{ticker}/history) — avoids Alpha Vantage per model on /compare.
         cached_ohlcv = await read_ohlcv_parquet(sym_key)
         if cached_ohlcv is not None and not cached_ohlcv.empty:
@@ -131,10 +136,22 @@ class BacktestingService:
         price_df = raw_price[["date", "close"]].copy()
         price_df["date"] = pd.to_datetime(price_df["date"])
 
+        if is_baseline_strategy(model_key):
+            return await asyncio.to_thread(
+                self._run_baseline_cpu,
+                sym,
+                model_key,
+                price_df,
+                start_date,
+                end_date,
+                initial_capital,
+            )
+
+        mid = ModelId(model_key)
         return await asyncio.to_thread(
             self._run_single_cpu,
             sym,
-            model,
+            mid,
             price_df,
             start_date,
             end_date,
@@ -215,6 +232,55 @@ class BacktestingService:
             equity_curve=curve,
         )
 
+    def _run_baseline_cpu(
+        self,
+        sym: str,
+        strategy_id: str,
+        price_df: pd.DataFrame,
+        start_date: date | None,
+        end_date: date | None,
+        initial_capital: float,
+    ) -> BacktestResponse:
+        p = price_df.copy()
+        p["date"] = pd.to_datetime(p["date"])
+        if start_date is not None:
+            dt = pd.Timestamp(start_date.isoformat())
+            p = p[p["date"] >= dt].copy()
+        if end_date is not None:
+            dt = pd.Timestamp(end_date.isoformat())
+            p = p[p["date"] <= dt].copy()
+        if p.empty:
+            raise BacktestInputError("No data in selected date range")
+        preds = baseline_predictions_for(strategy_id, p)
+        engine = BacktestEngine(initial_capital=initial_capital)
+        out = engine.run(p, preds, ticker=sym, model_id=strategy_id)
+        curve = [
+            EquityPoint(
+                date=pd.Timestamp(r["date"]).date(),
+                equity=float(r["equity"]),
+                return_pct=float(r["return_pct"]),
+                benchmark_equity=float(r["benchmark_equity"]),
+            )
+            for _, r in out.equity_curve.iterrows()
+        ]
+        return BacktestResponse(
+            ticker=out.ticker,
+            model=out.model_id,
+            start_date=date.fromisoformat(out.start_date),
+            end_date=date.fromisoformat(out.end_date),
+            initial_capital=out.initial_capital,
+            metrics=BacktestMetrics(
+                cumulative_return=out.cumulative_return,
+                annualized_return=out.annualized_return,
+                sharpe_ratio=out.sharpe_ratio,
+                max_drawdown=out.max_drawdown,
+                win_rate=out.win_rate,
+                total_trades=out.total_trades,
+                turnover=out.turnover,
+            ),
+            equity_curve=curve,
+        )
+
     async def compare_models(
         self,
         *,
@@ -235,7 +301,7 @@ class BacktestingService:
             try:
                 res = await self.run_single(
                     ticker=ticker,
-                    model=mid,
+                    model=mid.value,
                     start_date=start_date,
                     end_date=end_date,
                     initial_capital=initial_capital,
@@ -262,4 +328,37 @@ class BacktestingService:
             return mid.value, row
 
         pairs = await asyncio.gather(*[_one(mid) for mid in ROLLOUT_MODEL_IDS])
-        return {k: v for k, v in pairs}
+        out: dict[str, BacktestCompareRow] = {k: v for k, v in pairs}
+
+        async def _baseline_row(bid: str) -> tuple[str, BacktestCompareRow]:
+            try:
+                res = await self.run_single(
+                    ticker=ticker,
+                    model=bid,
+                    start_date=start_date,
+                    end_date=end_date,
+                    initial_capital=initial_capital,
+                )
+                row = BacktestCompareRow(
+                    model=bid,
+                    ok=True,
+                    metrics={
+                        "cumulative_return": res.metrics.cumulative_return,
+                        "annualized_return": res.metrics.annualized_return,
+                        "sharpe_ratio": res.metrics.sharpe_ratio,
+                        "max_drawdown": res.metrics.max_drawdown,
+                        "win_rate": res.metrics.win_rate,
+                        "total_trades": res.metrics.total_trades,
+                        "turnover": float(res.metrics.turnover or 0.0),
+                    },
+                )
+            except (BacktestDependencyError, BacktestInputError) as e:
+                row = BacktestCompareRow(model=bid, ok=False, error=str(e))
+            return bid, row
+
+        base_pairs = await asyncio.gather(
+            _baseline_row("baseline_buy_hold"),
+            _baseline_row("baseline_ma_200"),
+        )
+        out.update(dict(base_pairs))
+        return out

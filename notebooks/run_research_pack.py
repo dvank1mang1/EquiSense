@@ -27,6 +27,7 @@ from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
     f1_score,
+    roc_auc_score,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -75,6 +76,11 @@ from app.ml.spa_lite import block_bootstrap_mean_pvalue  # noqa: E402
 sns.set_theme(style="whitegrid", context="talk")
 np.random.seed(42)
 
+# Purged CV / ranking must match the supervised label horizon (see _load_combined_panel).
+_LABEL_HORIZON_DAYS = 5
+# Binary label target_up_5d uses cumulative forward return strictly above this (fraction).
+_LABEL_RETURN_THRESHOLD = 0.01
+
 
 def _load_combined_panel() -> pd.DataFrame:
     store = FeatureStore(data_root=BACKEND / "data")
@@ -91,15 +97,22 @@ def _load_combined_panel() -> pd.DataFrame:
         combined = combined.sort_values("date").reset_index(drop=True)
         combined["ticker"] = t
         combined["ret_1d"] = pd.to_numeric(combined["returns"], errors="coerce")
-        # 5-day cumulative forward return (sum of next 5 daily returns)
+        # Sum of the next 5 daily returns after row t (aligned with target_up_5d at t).
         fwd_5d = combined["ret_1d"].rolling(5).sum().shift(-5)
-        combined["target_up_5d"] = (fwd_5d > 0.01).astype(int)
+        combined["fwd_5d"] = fwd_5d
+        combined["target_up_5d"] = (fwd_5d > _LABEL_RETURN_THRESHOLD).astype(int)
         rows.append(combined.iloc[:-5].copy())
 
     if not rows:
         raise RuntimeError("No combined processed data for any ticker")
 
     return pd.concat(rows, ignore_index=True)
+
+
+def _ranking_eval_frame(d: pd.DataFrame, mask: pd.Series) -> pd.DataFrame:
+    """Rows for IC / Rank IC / quantile: same horizon as ``target_up_5d`` (``fwd_5d``)."""
+    out = d.loc[mask, ["date", "ticker", "fwd_5d"]].copy()
+    return out.rename(columns={"fwd_5d": "forward_return"})
 
 
 def _feature_groups(df: pd.DataFrame) -> dict[str, list[str]]:
@@ -150,31 +163,85 @@ def _label_split_stats(y: pd.Series, split: str) -> dict[str, object]:
 def _metrics(
     y_true: pd.Series, proba: np.ndarray, eval_frame: pd.DataFrame | None = None
 ) -> dict[str, float]:
+    y_arr = np.asarray(y_true).astype(int)
+    prevalence = float(np.mean(y_arr)) if len(y_arr) else float("nan")
     pred = (proba >= 0.5).astype(int)
     out: dict[str, float] = {
         "accuracy": float(accuracy_score(y_true, pred)),
         "f1": float(f1_score(y_true, pred)),
+        "prevalence_positive": prevalence,
     }
     try:
         out["brier"] = float(brier_score_loss(y_true, proba))
     except ValueError:
         out["brier"] = float("nan")
     try:
-        out["pr_auc"] = float(average_precision_score(y_true, proba))
+        out["roc_auc"] = float(roc_auc_score(y_arr, np.asarray(proba, dtype=float)))
+    except ValueError:
+        out["roc_auc"] = float("nan")
+    try:
+        pr_pos = float(average_precision_score(y_arr, np.asarray(proba, dtype=float)))
+        out["pr_auc"] = pr_pos
+        out["pr_auc_minus_prevalence"] = float(pr_pos - prevalence)
     except ValueError:
         out["pr_auc"] = float("nan")
+        out["pr_auc_minus_prevalence"] = float("nan")
+    try:
+        inv_y = 1 - y_arr
+        inv_p = 1.0 - np.clip(np.asarray(proba, dtype=float), 0.0, 1.0)
+        out["pr_auc_negative_class_as_positive"] = float(average_precision_score(inv_y, inv_p))
+    except ValueError:
+        out["pr_auc_negative_class_as_positive"] = float("nan")
     rank = precision_recall_at_k(y_true, proba, k=max(1, int(len(y_true) * 0.25)))
     out["precision_at_k"] = float(rank["precision_at_k"])
     out["recall_at_k"] = float(rank["recall_at_k"])
     rel_df, ece = reliability_curve_and_ece(y_true, proba, n_bins=10)
     out["ece"] = float(ece)
     if eval_frame is not None and not eval_frame.empty:
-        fm = financial_selection_metrics(eval_frame, score_col="score", return_col="forward_return")
-        icm = information_coefficient_metrics(eval_frame, score_col="score", return_col="forward_return")
+        fm = financial_selection_metrics(
+            eval_frame,
+            score_col="score",
+            return_col="forward_return",
+            label_return_threshold=_LABEL_RETURN_THRESHOLD,
+        )
+        icm = information_coefficient_metrics(
+            eval_frame,
+            score_col="score",
+            return_col="forward_return",
+            include_negated_score=True,
+        )
         out.update({k: float(v) for k, v in fm.items()})
         out.update({k: float(v) for k, v in icm.items()})
     out["_reliability_rows"] = rel_df.to_dict(orient="records")
     return out
+
+
+def _write_metric_sanity(metrics_df: pd.DataFrame) -> pd.DataFrame:
+    """Cross-checks: negated-score IC vs IC, PR-AUC vs prevalence (not a formal bound)."""
+    rows: list[dict[str, float | str]] = []
+    for _, r in metrics_df.iterrows():
+        ic = float(r.get("ic_mean", np.nan))
+        icn = float(r.get("ic_mean_neg_score", np.nan))
+        ric = float(r.get("rank_ic_mean", np.nan))
+        ricn = float(r.get("rank_ic_mean_neg_score", np.nan))
+        prev = float(r.get("prevalence_positive", np.nan))
+        pr = float(r.get("pr_auc", np.nan))
+        spread = float(r.get("long_short_spread", np.nan))
+        rows.append(
+            {
+                "model": str(r["model"]),
+                "prevalence_positive": prev,
+                "pr_auc": pr,
+                "pr_auc_minus_prevalence": float(r.get("pr_auc_minus_prevalence", np.nan)),
+                "ic_plus_ic_neg_score": float(ic + icn) if np.isfinite(ic) and np.isfinite(icn) else float("nan"),
+                "rank_ic_plus_rank_ic_neg": float(ric + ricn)
+                if np.isfinite(ric) and np.isfinite(ricn)
+                else float("nan"),
+                "ic_sign": np.sign(ic) if np.isfinite(ic) else float("nan"),
+                "long_short_spread_sign": np.sign(spread) if np.isfinite(spread) else float("nan"),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _fit_rf(
@@ -254,8 +321,7 @@ def _cv_metrics(
         rf, imp = _fit_rf(x_tr, y_tr, None, None, trials=0)
         x_te_t = imp.transform(x_te)
         proba = rf.predict_proba(x_te_t)[:, 1]
-        scored = d.loc[m_te, ["date", "ticker", "ret_1d"]].copy()
-        scored = scored.rename(columns={"ret_1d": "forward_return"})
+        scored = _ranking_eval_frame(d, m_te)
         scored["score"] = proba
         rank_eval, _ = _strategy_rank_eval(scored, y_true=y_te, top_frac=0.2)
         out.append(
@@ -413,6 +479,9 @@ def _strategy_rank_eval(
     Fixes two methodological issues:
     1) no global precision@k over pooled rows (uses per-date precision and averages),
     2) no fixed top_k that can select full universe on small cross-sections.
+
+    IC / quantile means are computed on the same row set ``s`` as the loop (aligned with
+    ``y_true``), not the raw ``scored`` frame which may contain extra rows.
     """
     if not (0.0 < top_frac < 1.0):
         raise ValueError("top_frac must be in (0, 1)")
@@ -421,10 +490,22 @@ def _strategy_rank_eval(
     s = s.dropna(subset=["date", "score", "forward_return", "target"]).copy()
     if s.empty:
         return {}, pd.DataFrame(columns=["date", "n_assets", "k_used", "selected_fraction"])
-    fm = financial_selection_metrics(scored, score_col="score", return_col="forward_return")
-    icm = information_coefficient_metrics(scored, score_col="score", return_col="forward_return")
+    s_eval = s[["date", "score", "forward_return"]].copy()
+    fm = financial_selection_metrics(
+        s_eval,
+        score_col="score",
+        return_col="forward_return",
+        label_return_threshold=_LABEL_RETURN_THRESHOLD,
+    )
+    icm = information_coefficient_metrics(
+        s_eval,
+        score_col="score",
+        return_col="forward_return",
+        include_negated_score=True,
+    )
     daily_portfolio_returns: list[float] = []
     selected_returns: list[float] = []
+    selected_targets: list[int] = []
     daily_precisions: list[float] = []
     debug_rows: list[dict[str, float | int | str]] = []
     for dt, g in s.groupby("date"):
@@ -439,6 +520,7 @@ def _strategy_rank_eval(
         top = gs.iloc[:k]
         daily_portfolio_returns.append(float(top["forward_return"].mean()))
         selected_returns.extend(top["forward_return"].tolist())
+        selected_targets.extend(top["target"].astype(int).tolist())
         daily_precisions.append(float(top["target"].mean()))
         debug_rows.append(
             {
@@ -452,18 +534,24 @@ def _strategy_rank_eval(
     selected_arr = (
         np.asarray(selected_returns, dtype=float) if selected_returns else np.asarray([0.0], dtype=float)
     )
+    sel_tgt = np.asarray(selected_targets, dtype=float) if selected_targets else np.asarray([np.nan])
     daily_prec = np.asarray(daily_precisions, dtype=float) if daily_precisions else np.asarray([np.nan])
     out = {
         "precision_at_k": float(np.nanmean(daily_prec)),
         "precision_at_k_std": float(np.nanstd(daily_prec, ddof=1)) if len(daily_prec) > 1 else 0.0,
         "ic": float(icm.get("ic_mean", np.nan)),
         "rank_ic": float(icm.get("rank_ic_mean", np.nan)),
+        "ic_neg_score": float(icm.get("ic_mean_neg_score", np.nan)),
+        "rank_ic_neg_score": float(icm.get("rank_ic_mean_neg_score", np.nan)),
         "quantile_top_return": float(fm.get("top_quantile_return", np.nan)),
         "quantile_bottom_return": float(fm.get("bottom_quantile_return", np.nan)),
         "long_short_spread": float(fm.get("long_short_spread", np.nan)),
         "sharpe": float(annualized_sharpe(daily)),
         "average_return": float(np.nanmean(daily)),
-        "hit_rate": float(np.nanmean(selected_arr > 0.0)),
+        # Pooled fraction of selected names with label==1 (same definition as ``target`` passed in).
+        "hit_rate": float(np.nanmean(sel_tgt)),
+        "fraction_selected_fwd_gt_0": float(np.nanmean(selected_arr > 0.0)),
+        "fraction_selected_fwd_gt_label_threshold": float(np.nanmean(selected_arr > _LABEL_RETURN_THRESHOLD)),
         "avg_selected_fraction": float(np.nanmean([r["selected_fraction"] for r in debug_rows]))
     }
     return out, pd.DataFrame(debug_rows)
@@ -536,7 +624,13 @@ def _diebold_on_test(
     proba_col: str,
     threshold: float,
 ) -> dict[str, float]:
-    """DM on daily direction log-loss (strategy forecast vs constant 0.5)."""
+    """
+    Diebold–Mariano on **daily** log-loss using equal-weight **next-day** universe return sign.
+
+    ``y`` is 1 iff mean cross-sectional ``ret_1d`` on that calendar date is positive. This is
+    **not** the same event as ``target_up_5d`` (5-day cumulative > 1%); interpret DM as a
+    coarse calibration check on daily directional forecasts, not label consistency.
+    """
     bt = df_test.copy()
     p_raw = pd.to_numeric(bt[proba_col], errors="coerce").clip(0.0, 1.0)
     # If column looks binary, convert with threshold; otherwise preserve probabilities.
@@ -570,7 +664,7 @@ def run_pipeline(
     pkh = purged_kfold_with_horizon(
         udates,
         n_splits=5,
-        label_horizon_days=1,
+        label_horizon_days=_LABEL_HORIZON_DAYS,
         embargo_days=5,
     )
     cpcv = combinatorial_purged_cv_splits(
@@ -578,7 +672,7 @@ def run_pipeline(
         n_groups=cpcv_groups,
         test_n_groups=2,
         embargo_days=5,
-        label_horizon_days=1,
+        label_horizon_days=_LABEL_HORIZON_DAYS,
         max_splits=cpcv_max_splits,
     )
 
@@ -680,8 +774,7 @@ def run_pipeline(
     x_tr_imp = imputer.transform(x_tr)
     x_va_imp = imputer.transform(x_va)
 
-    eval_val = d.loc[m_va, ["date", "ticker", "ret_1d"]].copy()
-    eval_val = eval_val.rename(columns={"ret_1d": "forward_return"})
+    eval_val = _ranking_eval_frame(d, m_va)
 
     def _xgb_objective(trial: optuna.Trial) -> float:
         clf = XGBClassifier(
@@ -741,8 +834,7 @@ def run_pipeline(
     best_lgbm.fit(x_tr_imp, y_tr)
     proba_lgbm_te = best_lgbm.predict_proba(x_te_t)[:, 1]
 
-    eval_base = d.loc[m_te, ["date", "ticker", "ret_1d"]].copy()
-    eval_base = eval_base.rename(columns={"ret_1d": "forward_return"})
+    eval_base = _ranking_eval_frame(d, m_te)
     metrics_rows = []
     reliability_rows = []
     for model_name, model_proba in [
@@ -755,15 +847,21 @@ def run_pipeline(
         ef = eval_base.copy()
         ef["score"] = model_proba
         m = _metrics(y_te, model_proba, ef)
+        rank_holdout, _ = _strategy_rank_eval(ef, y_true=y_te, top_frac=0.2)
+        # ``precision_at_k`` in ``_metrics`` is a pooled global top-quantile of rows (misleading
+        # next to cross-sectional IC). Canonical precision for this pack is per-date top fraction.
+        m["precision_at_k_pooled_top25pct_rows"] = m["precision_at_k"]
+        m["precision_at_k"] = float(rank_holdout.get("precision_at_k", float("nan")))
         rel = m.pop("_reliability_rows", [])
         for row in rel:
             reliability_rows.append({"model": model_name, **row})
         metrics_rows.append({"model": model_name, **m})
     metrics_df = pd.DataFrame(metrics_rows).sort_values("rank_ic_mean", ascending=False)
     metrics_df.to_csv(OUT_DIR / "model_metrics.csv", index=False)
+    _write_metric_sanity(metrics_df).to_csv(OUT_DIR / "metric_sanity.csv", index=False)
     pd.DataFrame(reliability_rows).to_csv(OUT_DIR / "reliability_curve.csv", index=False)
 
-    test_out = d.loc[m_te, ["date", "ticker", "ret_1d"]].copy()
+    test_out = d.loc[m_te, ["date", "ticker", "ret_1d", "fwd_5d"]].copy()
     test_out["proba_baseline"] = proba_base_te
     test_out["proba_pca"] = proba_pca_te
     test_out["proba_rf"] = proba_rf_te
@@ -792,7 +890,7 @@ def run_pipeline(
         "proba_xgb": best_xgb.predict_proba(x_va_imp)[:, 1],
         "proba_lgbm": best_lgbm.predict_proba(x_va_imp)[:, 1],
     }[_best_proba_col]
-    thr = _pick_threshold(_best_va_proba, d.loc[m_va, "ret_1d"].values)
+    thr = _pick_threshold(_best_va_proba, d.loc[m_va, "fwd_5d"].values)
 
     _backtest_daily(
         test_out,
@@ -822,7 +920,7 @@ def run_pipeline(
     oof_splits = purged_kfold_with_horizon(
         u_tv,
         n_splits=oof_n_splits,
-        label_horizon_days=1,
+        label_horizon_days=_LABEL_HORIZON_DAYS,
         embargo_days=5,
     )
     if not oof_splits:
@@ -842,7 +940,7 @@ def run_pipeline(
         meta_train = val_df
         y_meta_val = build_meta_labels(
             meta_train,
-            ret_col="ret_1d",
+            target_col="target_up_5d",
             primary_proba_col="proba_primary_for_meta",
             threshold=thr,
         )
@@ -851,7 +949,7 @@ def run_pipeline(
     else:
         y_meta_val = build_meta_labels(
             meta_train,
-            ret_col="ret_1d",
+            target_col="target_up_5d",
             primary_proba_col="proba_primary_for_meta",
             threshold=thr,
         )
@@ -962,8 +1060,7 @@ def run_pipeline(
         y_te_s = d.loc[m_te, "target_up_5d"].astype(int)
         model_s, imp_s = _fit_rf(x_tr_s, y_tr_s, None, None, trials=0)
         proba_s = model_s.predict_proba(imp_s.transform(x_te_s))[:, 1]
-        scored_s = d.loc[m_te, ["date", "ticker", "ret_1d"]].copy()
-        scored_s = scored_s.rename(columns={"ret_1d": "forward_return"})
+        scored_s = _ranking_eval_frame(d, m_te)
         scored_s["score"] = proba_s
         rank_eval, debug_df = _strategy_rank_eval(scored_s, y_true=y_te_s, top_frac=0.2)
         if not debug_df.empty:
@@ -985,8 +1082,8 @@ def run_pipeline(
         strategy_debug.to_csv(OUT_DIR / "strategy_selection_debug.csv", index=False)
 
     # Thesis plot: cumulative returns by per-date prediction quantiles (best test score column).
-    quant_scored = test_out[["date", "ticker", "ret_1d", _best_proba_col]].rename(
-        columns={"ret_1d": "forward_return", _best_proba_col: "score"}
+    quant_scored = test_out[["date", "ticker", "fwd_5d", _best_proba_col]].rename(
+        columns={"fwd_5d": "forward_return", _best_proba_col: "score"}
     )
     q_daily, q_cum = _quantile_cumulative_returns(
         quant_scored,
@@ -1116,19 +1213,36 @@ def _plots(
         plt.savefig(OUT_DIR / "02_correlation_heatmap.png", dpi=160)
         plt.close()
 
-    plt.figure(figsize=(11, 6))
-    sns.barplot(
-        data=metrics_df.melt(id_vars="model", var_name="metric", value_name="value"),
-        x="model",
-        y="value",
-        hue="metric",
-    )
-    plt.title("Holdout Model Comparison: Ranking & Financial Metrics")
-    plt.ylabel("Score")
-    plt.xticks(rotation=12)
-    plt.tight_layout()
-    plt.savefig(OUT_DIR / "03_model_metrics.png", dpi=160)
-    plt.close()
+    plot_metric_cols = [
+        c
+        for c in (
+            "ic_mean",
+            "rank_ic_mean",
+            "long_short_spread",
+            "top_quantile_return",
+            "precision_at_k",
+            "roc_auc",
+            "pr_auc",
+            "prevalence_positive",
+        )
+        if c in metrics_df.columns
+    ]
+    if plot_metric_cols:
+        plt.figure(figsize=(11, 6))
+        sns.barplot(
+            data=metrics_df.melt(
+                id_vars="model", value_vars=plot_metric_cols, var_name="metric", value_name="value"
+            ),
+            x="model",
+            y="value",
+            hue="metric",
+        )
+        plt.title("Holdout Model Comparison: Ranking & Financial Metrics")
+        plt.ylabel("Score")
+        plt.xticks(rotation=12)
+        plt.tight_layout()
+        plt.savefig(OUT_DIR / "03_model_metrics.png", dpi=160)
+        plt.close()
 
     if not trials_df.empty:
         td = trials_df.dropna(subset=["value"]).sort_values("number")
@@ -1225,12 +1339,12 @@ def _report(
     text = f"""# Research Pack Summary (rigorous)
 
 Generated from `backend/data/processed` with **walk-forward expanding CV**, **purged k-fold + embargo**,
-**holdout test**, **transaction costs**, **Diebold–Mariano** on daily losses.
+**holdout test**, **transaction costs**, and **Diebold–Mariano** on a **daily** universe-direction benchmark (see DM section).
 
 ## Main task (single source of truth)
 - Primary objective: **cross-sectional stock ranking for portfolio selection**.
 - Classifiers are used as score generators; ranking/trading metrics are primary.
-- ROC-AUC is not used as a primary metric because the task is cross-sectional ranking rather than global classification.
+- **ROC-AUC** and **PR-AUC** are reported in `model_metrics.csv` as **auxiliary classification** diagnostics; they are not optimization targets for Optuna in this pack.
 
 See **`notebooks/LITERATURE_REVIEW.md`** for paper references (XGB/LightGBM/FinBERT/Optuna + validation/statistics).
 See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
@@ -1239,17 +1353,22 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - Logistic baselines: `class_weight=balanced`; RandomForest / meta / OOF RF: `class_weight=balanced` (aligned with production training helpers).
 - Median imputation for all sklearn pipelines in this pack.
 
-## Label distribution (next-day up), by time split
+## Label distribution (5-day cumulative up > 1%), by time split
 {label_md}
 
 ## Validation & leakage control
-- Target: `target_up_5d` = (next-day return > 0); features at `t` do not use future prices beyond the
-  engineered pipeline.
+- Target: `target_up_5d` = 1 iff **5-day cumulative forward return** `fwd_5d` > **1%** (sum of next five daily returns from `t+1`); features at `t` do not use future prices beyond the engineered pipeline.
+- **IC, Rank IC, precision@k, quantile / long–short spread** use the same horizon: `forward_return` in evaluation frames is **`fwd_5d`**, not next-day `ret_1d`.
+- **Equal-weight backtests, DM, SPA-lite** use **daily** `ret_1d` (execution / reporting horizon); do not equate that PnL horizon with the 5-day label unless you redesign the strategy to hold 5 days.
 - Walk-forward expanding splits and purged k-fold reduce overlap between train and test in time.
 - Threshold for strategy (`p >= {threshold:.2f}`) chosen on **validation** only, **not** on holdout.
 
-## Holdout ranking/financial metrics (best row by Rank IC)
-- **{winner["model"]}**: ic={winner.get("ic_mean", float("nan")):.4f}, rank_ic={winner.get("rank_ic_mean", float("nan")):.4f}, precision@k={winner.get("precision_at_k", float("nan")):.4f}, long_short_spread={winner.get("long_short_spread", float("nan")):.6f}
+## Holdout — classification (best row by Rank IC)
+- **{winner["model"]}**: prevalence={winner.get("prevalence_positive", float("nan")):.4f}, pr_auc={winner.get("pr_auc", float("nan")):.4f} (pr_auc − prevalence={winner.get("pr_auc_minus_prevalence", float("nan")):.4f}), roc_auc={winner.get("roc_auc", float("nan")):.4f}
+
+## Holdout — ranking / 5d forward return (same horizon as label)
+- **{winner["model"]}**: ic={winner.get("ic_mean", float("nan")):.4f}, rank_ic={winner.get("rank_ic_mean", float("nan")):.4f}, precision@k (per-date top 20% by score)={winner.get("precision_at_k", float("nan")):.4f}, long_short_spread={winner.get("long_short_spread", float("nan")):.6f}
+- Pooled-row precision (legacy, not comparable to IC) is in `model_metrics.csv` as `precision_at_k_pooled_top25pct_rows`.
 
 ## Cross-validation (mean Rank IC across folds)
 - Walk-forward: **{wf_mean:.4f}**
@@ -1270,7 +1389,7 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - Meta Net Sharpe (ann.): **{stats_meta.get("sharpe_strategy_net", float("nan")):.3f}**
 - Max DD (net): **{stats_net.get("max_dd_net", float("nan")):.4f}**
 
-## Diebold–Mariano (strategy vs benchmark log-loss)
+## Diebold–Mariano (daily next-day universe sign vs forecast log-loss)
 - DM stat: **{dm.get("dm_stat", float("nan")):.4f}**
 - p-value (two-sided): **{dm.get("p_value_two_sided", float("nan")):.4e}**
 - Meta DM stat: **{dm_meta.get("dm_stat", float("nan")):.4f}**
@@ -1281,16 +1400,17 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - One-sided p-value (H1: mean > 0): **{spa.get("p_value_one_sided", float("nan")):.4f}**
 
 ## Interpretation (auto-generated checklist)
+- **Horizons:** ranking metrics above use the same 5-day `fwd_5d` as the label; if IC/Rank IC and quantile spread still disagree, that is more likely **noise / weak signal / calibration** than a 1d-vs-5d definition bug.
 - If **Rank IC** and **IC** are near zero and quantile spreads are weak, treat ranking signal as **not demonstrated** on this panel; focus on pipeline sanity, not live trading.
 - Use **precision@k**, **quantile spread**, and **Sharpe/hit-rate** together; no single ranking metric is sufficient on noisy financial panels.
-- Use **DM p-values** as a sanity check on forecast loss vs naive 0.5; they do not guarantee economic value after costs.
+- Use **DM p-values** only in the sense documented above (daily sign vs probability); they do not validate the 5d label and do not guarantee economic value after costs.
 - **SPA-lite** is a coarse block-bootstrap on mean excess; it is **not** full Hansen (2005) SPA across many models — see literature notes.
 - Compare **net** backtest curves to gross when costs matter; meta-gated curve is exploratory (OOF primary + meta on train/val).
 
 ## Produced artifacts
 - `RESEARCH_SUMMARY.md` (this file), `label_distribution.csv`
 - `cv_fold_metrics.csv`, `cv_summary.csv`
-- `model_metrics.csv`, `test_predictions.csv`, `feature_importance_top20.csv`
+- `model_metrics.csv`, `metric_sanity.csv`, `test_predictions.csv`, `feature_importance_top20.csv`
 - `backtest_curves.csv`, `backtest_curves_meta.csv`, `backtest_stats.csv`, `spa_lite_holdout.csv`
 - PNGs `01`–`08` (see folder)
 """

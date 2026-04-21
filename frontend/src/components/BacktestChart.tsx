@@ -13,9 +13,11 @@ const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 interface BacktestChartProps {
   ticker: string;
   model: string;
+  /** ML backtests need processed technical features; rule baselines only need OHLCV. */
+  variant?: "ml" | "baseline";
 }
 
-export default function BacktestChart({ ticker, model }: BacktestChartProps) {
+export default function BacktestChart({ ticker, model, variant = "ml" }: BacktestChartProps) {
   const [jobId, setJobId] = useState<string | null>(null);
   const [lastError, setLastError] = useState<unknown | null>(null);
   /** Пустая строка = весь доступный диапазон (как на бэкенде). */
@@ -80,8 +82,12 @@ export default function BacktestChart({ ticker, model }: BacktestChartProps) {
       );
     }
 
-    const ready = preflight?.ready ?? false;
-    const reason = preflight?.reason ?? "данные не готовы";
+    const ready =
+      variant === "baseline" ? (preflight?.ready_baseline ?? false) : (preflight?.ready ?? false);
+    const reason =
+      variant === "baseline" && !(preflight?.ready_baseline ?? false)
+        ? "Нужен локальный OHLCV (data/raw/ohlcv) или ключ Alpha Vantage / BACKTEST_ALLOW_NETWORK_FALLBACK для загрузки цен."
+        : (preflight?.reason ?? "данные не готовы");
     return (
       <div className="flex flex-col items-start gap-4">
         {ready ? (
@@ -121,8 +127,13 @@ export default function BacktestChart({ ticker, model }: BacktestChartProps) {
               {reason}. Сначала запустите обновление данных (refresh-universe), затем повторите.
             </p>
             <p className="mt-3 rounded-md bg-black/20 px-2 py-1.5 font-mono text-[11px] text-slate-500">
-              OHLCV (raw): {preflight?.has_cached_ohlcv ? "ok" : "missing"} · technical ETL:{" "}
-              {preflight?.has_processed_technical ? "ok" : "missing"}
+              OHLCV (raw): {preflight?.has_cached_ohlcv ? "ok" : "missing"}
+              {variant === "ml" ? (
+                <>
+                  {" "}
+                  · technical ETL: {preflight?.has_processed_technical ? "ok" : "missing"}
+                </>
+              ) : null}
             </p>
           </div>
         )}

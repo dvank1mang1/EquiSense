@@ -11,18 +11,26 @@ from sklearn.impute import SimpleImputer
 def build_meta_labels(
     df: pd.DataFrame,
     *,
-    ret_col: str = "ret_1d",
     primary_proba_col: str = "proba_primary",
     threshold: float = 0.5,
+    target_col: str | None = None,
+    ret_col: str = "ret_1d",
 ) -> pd.Series:
     """
-    Binary meta-label:
-    1 if primary directional call is correct, else 0.
+    Binary meta-label: 1 iff primary call matches the realized outcome.
+
+    - If ``target_col`` is set (e.g. ``target_up_5d``), compare ``y_hat`` to that column.
+    - Else fallback: primary predicts next-day sign vs ``ret_col`` (legacy one-day horizon).
     """
-    y_dir = (pd.to_numeric(df[ret_col], errors="coerce") > 0).astype(int)
     p = pd.to_numeric(df[primary_proba_col], errors="coerce")
     y_hat = (p >= threshold).astype(int)
-    return (y_hat == y_dir).astype(int)
+    if target_col is not None:
+        if target_col not in df.columns:
+            raise KeyError(f"build_meta_labels: missing target column {target_col!r}")
+        y_true = pd.to_numeric(df[target_col], errors="coerce").fillna(0).astype(int)
+    else:
+        y_true = (pd.to_numeric(df[ret_col], errors="coerce") > 0).astype(int)
+    return (y_hat == y_true).astype(int)
 
 
 def fit_meta_model(

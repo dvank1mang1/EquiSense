@@ -17,6 +17,8 @@ type BacktestJobStatus =
 type BacktestPreflight = {
   ticker: string;
   ready: boolean;
+  /** True when cached (or remote) OHLCV exists — enough for rule baselines without ETL. */
+  ready_baseline?: boolean;
   has_cached_ohlcv: boolean;
   /** True если есть technical.parquet (из него собирается combined для модели). */
   has_combined_features: boolean;
@@ -74,6 +76,7 @@ function parseBacktestPreflight(data: unknown): BacktestPreflight {
   const {
     ticker,
     ready,
+    ready_baseline,
     has_cached_ohlcv,
     has_combined_features,
     has_processed_technical,
@@ -93,9 +96,12 @@ function parseBacktestPreflight(data: unknown): BacktestPreflight {
   const hpt =
     typeof has_processed_technical === "boolean" ? has_processed_technical : has_combined_features;
 
+  const rb = typeof ready_baseline === "boolean" ? ready_baseline : has_cached_ohlcv;
+
   return {
     ticker,
     ready,
+    ready_baseline: rb,
     has_cached_ohlcv,
     has_combined_features,
     has_processed_technical: hpt,

@@ -168,26 +168,20 @@ async def compare_models(
                 except ValueError:
                     sig = None
             comparison[mid.value] = {
+                **offline,
                 "ok": True,
                 "signal": sig.value if sig is not None else out.signal,
                 "probability": out.probability,
                 "confidence": out.confidence,
-                "f1": offline["f1"],
-                "roc_auc": offline["roc_auc"],
-                "precision": offline["precision"],
-                "recall": offline["recall"],
                 "error": None,
             }
         except (UnknownModelError, ModelArtifactMissingError, FeatureDataMissingError) as e:
             comparison[mid.value] = {
+                **offline,
                 "ok": False,
                 "signal": None,
                 "probability": None,
                 "confidence": None,
-                "f1": offline["f1"],
-                "roc_auc": offline["roc_auc"],
-                "precision": offline["precision"],
-                "recall": offline["recall"],
                 "error": str(e),
             }
             logger.warning(
@@ -198,14 +192,11 @@ async def compare_models(
             )
         except Exception as e:  # noqa: BLE001
             comparison[mid.value] = {
+                **offline,
                 "ok": False,
                 "signal": None,
                 "probability": None,
                 "confidence": None,
-                "f1": offline["f1"],
-                "roc_auc": offline["roc_auc"],
-                "precision": offline["precision"],
-                "recall": offline["recall"],
                 "error": f"internal_error: {e}",
             }
             logger.exception(

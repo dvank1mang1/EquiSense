@@ -291,29 +291,44 @@ def vega_long_row_to_ohlcv(long_df: pd.DataFrame, *, ticker: str) -> pd.DataFram
     return out
 
 
-def fetch_yfinance_daily(ticker: str, *, period: str = "10y") -> pd.DataFrame:
+def fetch_yfinance_daily(
+    ticker: str,
+    *,
+    period: str | None = "10y",
+    start: str | None = None,
+    end: str | None = None,
+) -> pd.DataFrame:
     """
     Дневные бары Yahoo Finance (неофициальный API).
 
     Сначала `yf.download` (другой путь, чем `Ticker.history`; часто работает,
     когда JSON quote API отдаёт HTML и падает с «Expecting value»).
     Затем `Ticker.history`.
+
+    If ``start`` and ``end`` are set (YYYY-MM-DD), they override ``period`` for an
+    explicit calendar window (e.g. 2021-01-01 .. 2025-12-31). Dates are interpreted in
+    exchange-local terms; ``ignore_tz=True`` strips any timezone to match the rest of the pipeline.
     """
     import yfinance as yf
 
     sym = ticker.strip().upper()
     last: str = ""
+    use_range = bool(start and end)
+    dl_kw: dict[str, Any] = {
+        "interval": "1d",
+        "auto_adjust": False,
+        "progress": False,
+        "threads": False,
+        "ignore_tz": True,
+    }
+    if use_range:
+        dl_kw["start"] = start
+        dl_kw["end"] = end
+    else:
+        dl_kw["period"] = period or "10y"
 
     try:
-        raw = yf.download(
-            sym,
-            period=period,
-            interval="1d",
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-            ignore_tz=True,
-        )
+        raw = yf.download(sym, **dl_kw)
         if raw is not None and not raw.empty:
             if isinstance(raw.columns, pd.MultiIndex):
                 raw = raw.copy()
@@ -324,7 +339,24 @@ def fetch_yfinance_daily(ticker: str, *, period: str = "10y") -> pd.DataFrame:
         last = str(e)
 
     try:
-        hist = yf.Ticker(sym).history(period=period, interval="1d", auto_adjust=False)
+        if use_range:
+            hkw: dict[str, Any] = {
+                "start": start,
+                "end": end,
+                "interval": "1d",
+                "auto_adjust": False,
+            }
+            try:
+                hist = yf.Ticker(sym).history(**hkw, repair=True)
+            except TypeError:
+                hist = yf.Ticker(sym).history(**hkw)
+        else:
+            try:
+                hist = yf.Ticker(sym).history(
+                    period=period or "10y", interval="1d", auto_adjust=False, repair=True
+                )
+            except TypeError:
+                hist = yf.Ticker(sym).history(period=period or "10y", interval="1d", auto_adjust=False)
         if hist is not None and not hist.empty:
             return normalize_ohlcv_frame(hist.reset_index(), ticker=sym)
     except Exception as e:  # noqa: BLE001
@@ -411,6 +443,8 @@ def fetch_ohlcv_auto(
     ticker: str,
     *,
     period: str = "10y",
+    start: str | None = None,
+    end: str | None = None,
     source: str = "auto",
     alpha_min_interval_sec: float | None = None,
     alpha_api_key_override: str | None = None,
@@ -446,9 +480,9 @@ def fetch_ohlcv_auto(
     if source == "stooq":
         return fetch_stooq_daily(sym), "stooq"
     if source == "yfinance":
-        return fetch_yfinance_daily(sym, period=period), "yfinance"
+        return fetch_yfinance_daily(sym, period=period, start=start, end=end), "yfinance"
     try:
-        return fetch_yfinance_daily(sym, period=period), "yfinance"
+        return fetch_yfinance_daily(sym, period=period, start=start, end=end), "yfinance"
     except Exception as yf_err:  # noqa: BLE001
         try:
             return fetch_stooq_daily(sym), "stooq"
@@ -752,7 +786,17 @@ def main() -> None:
     sp_yf.add_argument(
         "--period",
         default="10y",
-        help="Интервал yfinance history, напр. 5y, 10y, max",
+        help="Интервал yfinance history, напр. 5y, 10y, max (игнорируется, если заданы --start-date и --end-date)",
+    )
+    sp_yf.add_argument(
+        "--start-date",
+        default=None,
+        help="Начало окна YYYY-MM-DD (вместе с --end-date задаёт явный диапазон, напр. 2021-01-01)",
+    )
+    sp_yf.add_argument(
+        "--end-date",
+        default=None,
+        help="Конец окна YYYY-MM-DD (исключая этот день в стиле yfinance end=)",
     )
     sp_yf.add_argument("--sleep", type=float, default=0.25, help="Пауза между тикерами, сек")
     sp_yf.add_argument("--run-etl", action="store_true")
@@ -883,9 +927,13 @@ def main() -> None:
         for t in args.tickers:
             sym = t.strip().upper()
             try:
+                start_d = getattr(args, "start_date", None)
+                end_d = getattr(args, "end_date", None)
                 df, src = fetch_ohlcv_auto(
                     sym,
                     period=args.period,
+                    start=start_d,
+                    end=end_d,
                     source=args.source,
                     alpha_min_interval_sec=args.alpha_min_interval,
                     alpha_api_key_override=args.alpha_api_key,

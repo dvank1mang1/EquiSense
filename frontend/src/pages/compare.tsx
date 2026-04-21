@@ -7,7 +7,12 @@ import PageSection from "@/components/PageSection";
 import TickerSearch from "@/components/TickerSearch";
 import ModelComparison from "@/components/ModelComparison";
 import BacktestChart from "@/components/BacktestChart";
-import { MODEL_LABELS_LONG, ROLLOUT_MODEL_IDS } from "@/lib/models";
+import {
+  BACKTEST_BASELINE_IDS,
+  BACKTEST_BASELINE_LABELS,
+  MODEL_LABELS_LONG,
+  ROLLOUT_MODEL_IDS,
+} from "@/lib/models";
 import BrandLogo from "@/components/BrandLogo";
 import NewsMarquee from "@/components/NewsMarquee";
 
@@ -75,9 +80,26 @@ export default function ComparePage() {
                   eyebrow="Backtesting"
                   title={MODEL_LABELS_LONG[model] ?? model}
                 >
-                  <BacktestChart ticker={ticker} model={model} />
+                  <BacktestChart ticker={ticker} model={model} variant="ml" />
                 </PageSection>
               ))}
+
+              <PageSection id="compare-baselines-heading" eyebrow="Baselines" title="Простые стратегии (без ML)">
+                <p className="mb-6 text-sm text-slate-400">
+                  Те же цены и логика движка, что и у ML-бэктестов; достаточно OHLCV в{" "}
+                  <span className="font-mono text-[11px]">data/raw/ohlcv</span> (ETL не обязателен).
+                </p>
+                <div className="space-y-10">
+                  {BACKTEST_BASELINE_IDS.map((bid) => (
+                    <div key={bid} className="space-y-3">
+                      <h3 className="text-lg font-semibold text-white">
+                        {BACKTEST_BASELINE_LABELS[bid] ?? bid}
+                      </h3>
+                      <BacktestChart ticker={ticker} model={bid} variant="baseline" />
+                    </div>
+                  ))}
+                </div>
+              </PageSection>
             </>
           ) : (
             <section

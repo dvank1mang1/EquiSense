@@ -196,6 +196,8 @@ def test_compare_backtest_models_http_returns_ok_flags(monkeypatch: pytest.Monke
         assert payload["ticker"] == "AAPL"
         assert payload["comparison"]["model_a"]["ok"] is True
         assert payload["comparison"]["model_d"]["ok"] is True
+        assert payload["comparison"]["baseline_buy_hold"]["ok"] is True
+        assert payload["comparison"]["baseline_ma_200"]["ok"] is True
     finally:
         app.dependency_overrides.clear()
 

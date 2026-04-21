@@ -10,10 +10,19 @@ interface ModelComparisonProps {
 
 const SIGNAL_STYLES: Record<string, string> = {
   "Strong Buy": "text-success",
-  "Buy": "text-success",
-  "Hold": "text-warning",
-  "Sell": "text-danger",
+  Buy: "text-success",
+  Hold: "text-warning",
+  Sell: "text-danger",
 };
+
+function fmtMetric(v: unknown, digits: number, kind: "ratio" | "rate" | "plain" = "plain"): string {
+  if (v === null || v === undefined) return "—";
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return "—";
+  if (kind === "ratio") return n.toFixed(digits);
+  if (kind === "rate") return `${(n * 100).toFixed(digits)}%`;
+  return n.toFixed(digits);
+}
 
 export default function ModelComparison({ ticker }: ModelComparisonProps) {
   const { data, error, isLoading } = useModelComparison(ticker);
@@ -56,62 +65,225 @@ export default function ModelComparison({ ticker }: ModelComparisonProps) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-6">
       <p className="text-xs leading-relaxed text-slate-500">
-        F1 / ROC-AUC — holdout с последнего обучения на этом тикере (Postgres experiment store или
-        файл <span className="font-mono text-[10px]">model_d.metrics.json</span> (и т.п.) рядом с joblib
-        после <span className="font-mono text-[10px]">train_flat_demo_model.py</span>).
+        Метрики — holdout последнего обучения на этом тикере (эксперименты в Postgres или файл{" "}
+        <span className="font-mono text-[10px]">model_*.metrics.json</span> рядом с joblib после{" "}
+        <span className="font-mono text-[10px]">train_flat_demo_model.py</span>). Цель:{" "}
+        <span className="text-slate-400">P(рост)</span> — завтрашняя доходность &gt; 0 (как в backend
+        training_service).
       </p>
-      <div className="overflow-x-auto rounded-xl border border-surface-700/50">
-        <table className="w-full text-sm">
-          <caption className="sr-only">
-            Сравнение сигналов и метрик качества моделей по тикеру {ticker}
-          </caption>
-          <thead>
-            <tr className="border-b border-surface-700/70 bg-surface-900/30">
-              <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                Модель
-              </th>
-              <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                Сигнал
-              </th>
-              <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                P(рост)
-              </th>
-              <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                F1
-              </th>
-              <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                ROC-AUC
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {models.map(({ id, label }) => {
-              const m = data?.comparison?.[id as keyof typeof data.comparison];
-              return (
-                <tr
-                  key={id}
-                  className="border-b border-surface-700/40 transition-colors last:border-0 hover:bg-surface-800/50"
-                >
-                  <td className="px-3 py-3 font-medium text-white">{label}</td>
-                  <td className={clsx("px-3 py-3 text-center text-sm font-semibold", SIGNAL_STYLES[m?.signal ?? "Hold"])}>
-                    {m?.signal ?? "—"}
-                  </td>
-                  <td className="px-3 py-3 text-center font-mono text-sm tabular-nums text-slate-300">
-                    {m?.probability != null ? `${(m.probability * 100).toFixed(1)}%` : "—"}
-                  </td>
-                  <td className="px-3 py-3 text-center font-mono text-sm tabular-nums text-slate-300">
-                    {m?.f1?.toFixed(3) ?? "—"}
-                  </td>
-                  <td className="px-3 py-3 text-center font-mono text-sm tabular-nums text-slate-300">
-                    {m?.roc_auc?.toFixed(3) ?? "—"}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Сигналы</h3>
+        <div className="overflow-x-auto rounded-xl border border-surface-700/50">
+          <table className="w-full text-sm">
+            <caption className="sr-only">Сигналы и вероятность по моделям</caption>
+            <thead>
+              <tr className="border-b border-surface-700/70 bg-surface-900/30">
+                <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Модель
+                </th>
+                <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Сигнал
+                </th>
+                <th className="px-3 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  P(рост)
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.map(({ id, label }) => {
+                const m = data?.comparison?.[id as keyof typeof data.comparison];
+                return (
+                  <tr
+                    key={id}
+                    className="border-b border-surface-700/40 transition-colors last:border-0 hover:bg-surface-800/50"
+                  >
+                    <td className="px-3 py-3 font-medium text-white">{label}</td>
+                    <td
+                      className={clsx(
+                        "px-3 py-3 text-center text-sm font-semibold",
+                        SIGNAL_STYLES[m?.signal ?? "Hold"]
+                      )}
+                    >
+                      {m?.signal ?? "—"}
+                    </td>
+                    <td className="px-3 py-3 text-center font-mono text-sm tabular-nums text-slate-300">
+                      {m?.probability != null ? `${(m.probability * 100).toFixed(1)}%` : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Классификация (holdout)
+        </h3>
+        <div className="overflow-x-auto rounded-xl border border-surface-700/50">
+          <table className="w-full min-w-[720px] text-sm">
+            <caption className="sr-only">Классификационные метрики</caption>
+            <thead>
+              <tr className="border-b border-surface-700/70 bg-surface-900/30">
+                <th className="sticky left-0 z-10 bg-surface-900/95 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Модель
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  Acc
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  F1
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  ROC-AUC
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  PR-AUC
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  Prev+
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  PR−Prev
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  Brier
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  Prec
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  Rec
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  ECE
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.map(({ id, label }) => {
+                const m = data?.comparison?.[id as keyof typeof data.comparison];
+                return (
+                  <tr
+                    key={id}
+                    className="border-b border-surface-700/40 transition-colors last:border-0 hover:bg-surface-800/50"
+                  >
+                    <td className="sticky left-0 z-10 bg-surface-900/80 px-3 py-2.5 font-medium text-white backdrop-blur-sm">
+                      {label}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.accuracy, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.f1, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.roc_auc, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.pr_auc, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-400">
+                      {fmtMetric(m?.test_prevalence_positive, 3, "rate")}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.pr_auc_minus_prevalence, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.brier, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.precision, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.recall, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.ece, 3)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[10px] leading-relaxed text-slate-600">
+          Prev+ — доля положительного класса на тесте. PR−Prev — средняя точность vs этот baseline
+          (интерпретация PR-AUC). На одном тикере IC по датам часто пустой (одна бумага в сечении).
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Ранжирование и отбор (тест)
+        </h3>
+        <div className="overflow-x-auto rounded-xl border border-surface-700/50">
+          <table className="w-full min-w-[520px] text-sm">
+            <caption className="sr-only">Метрики ранжирования</caption>
+            <thead>
+              <tr className="border-b border-surface-700/70 bg-surface-900/30">
+                <th className="sticky left-0 z-10 bg-surface-900/95 px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Модель
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  P@K
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  R@K
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  IC
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  Rank IC
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  IC(−s)
+                </th>
+                <th className="px-2 py-2.5 text-center text-[10px] font-semibold uppercase text-slate-500">
+                  L/S spread
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.map(({ id, label }) => {
+                const m = data?.comparison?.[id as keyof typeof data.comparison];
+                return (
+                  <tr
+                    key={id}
+                    className="border-b border-surface-700/40 transition-colors last:border-0 hover:bg-surface-800/50"
+                  >
+                    <td className="sticky left-0 z-10 bg-surface-900/80 px-3 py-2.5 font-medium text-white backdrop-blur-sm">
+                      {label}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.precision_at_k, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.recall_at_k, 3)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.ic_mean, 4)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.rank_ic_mean, 4)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-400">
+                      {fmtMetric(m?.ic_mean_neg_score, 4)}
+                    </td>
+                    <td className="px-2 py-2.5 text-center font-mono text-xs tabular-nums text-slate-300">
+                      {fmtMetric(m?.long_short_spread, 4, "rate")}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

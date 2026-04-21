@@ -1,9 +1,12 @@
+import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.config import get_settings
 from app.domain.identifiers import ModelId
 from app.services.dependencies import get_training_service
 from app.services.training_service import TrainingService
@@ -74,16 +77,46 @@ async def list_models():
 
 
 @router.get("/{model_id}/metrics")
-async def get_model_metrics(model_id: str):
-    """ML-метрики модели: F1, ROC-AUC, Precision, Recall."""
+async def get_model_metrics(
+    model_id: str,
+    ticker: str | None = Query(
+        default=None,
+        description="If set, return holdout metrics from the latest run or flat metrics.json for this ticker.",
+    ),
+    service: TrainingService = Depends(get_training_service),
+):
+    """Holdout metrics from training (Postgres store, in-memory runs) or ``{model_id}.metrics.json``."""
+    try:
+        mid = ModelId(model_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Unknown model id: {model_id!r}") from e
+    if ticker and ticker.strip():
+        sym = ticker.strip().upper()
+        metrics = await service.offline_metrics_for_ticker_model(mid, sym)
+        return {"model_id": model_id, "ticker": sym, "source": "training_or_sidecar", "metrics": metrics}
+
+    sidecar = Path(get_settings().model_dir).resolve() / f"{mid.value}.metrics.json"
+    if sidecar.is_file():
+        try:
+            raw = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, TypeError):
+            raw = {}
+        if isinstance(raw, dict):
+            sym = str(raw.get("ticker", "") or "").strip().upper() or None
+            metrics_block = {k: v for k, v in raw.items() if k != "ticker"}
+            return {
+                "model_id": model_id,
+                "ticker": sym,
+                "source": "flat_metrics_json",
+                "metrics": metrics_block,
+            }
+
     return {
         "model_id": model_id,
-        "metrics": {
-            "f1": None,
-            "roc_auc": None,
-            "precision": None,
-            "recall": None,
-        },
+        "ticker": None,
+        "source": "none",
+        "metrics": None,
+        "detail": "No ticker= query and no readable flat metrics file for this model.",
     }
 
 

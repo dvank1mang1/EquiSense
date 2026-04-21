@@ -114,7 +114,7 @@ def test_backtest_job_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
         resp = asyncio.run(
             svc.run_single(
                 ticker="AAPL",
-                model=ModelId.MODEL_D,
+                model=ModelId.MODEL_D.value,
                 start_date=None,
                 end_date=None,
                 initial_capital=10000.0,
@@ -147,3 +147,17 @@ def test_backtest_job_run_validates_model_enum() -> None:
             json={"model": "bad_model_id"},
         )
         assert r.status_code == 422
+
+
+@pytest.mark.integration
+def test_backtest_job_run_accepts_baseline_strategy_id() -> None:
+    from main import app
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/v1/backtesting/AAPL/run",
+            json={"model": "baseline_buy_hold", "initial_capital": 10000.0},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert "job_id" in body

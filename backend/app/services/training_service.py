@@ -332,17 +332,27 @@ class TrainingService:
                     }
                 )
                 fin_metrics = financial_selection_metrics(eval_frame)
-                ic_metrics = information_coefficient_metrics(eval_frame)
+                ic_metrics = information_coefficient_metrics(
+                    eval_frame, include_negated_score=True
+                )
                 reliability_df, ece = reliability_curve_and_ece(y_test, y_score, n_bins=10)
+                prev = float(pd.to_numeric(y_test, errors="coerce").astype(float).mean())
+                pr_auc_val = float(metrics.get("pr_auc", float("nan")))
+                pr_minus_prev = (
+                    float(pr_auc_val - prev) if pr_auc_val == pr_auc_val and prev == prev else float("nan")
+                )
                 artifact_path = str(_artifact_path_for_run(model_id.value, run.run_id))
                 await asyncio.to_thread(instance.save, artifact_path)
                 metrics = {
+                    "accuracy": float(metrics.get("accuracy", float("nan"))),
                     "f1": float(metrics["f1"]),
                     "roc_auc": float(metrics["roc_auc"]),
                     "pr_auc": float(metrics["pr_auc"]),
+                    "pr_auc_minus_prevalence": pr_minus_prev,
                     "brier": float(metrics["brier"]),
                     "precision": float(metrics["precision"]),
                     "recall": float(metrics["recall"]),
+                    "test_prevalence_positive": prev,
                     "train_rows": int(len(train_df)),
                     "val_rows": int(len(val_df)),
                     "test_rows": int(len(test_df)),
@@ -433,17 +443,31 @@ class TrainingService:
         self, model_id: ModelId, ticker: str
     ) -> dict[str, float | None]:
         """
-        F1 / ROC-AUC с holdout-теста последнего завершённого обучения на этом тикере.
+        Holdout metrics from the latest completed training run on this ticker (or flat sidecar).
 
-        Не подмешивает метрики champion-run с другого тикера.
+        Does not mix in champion metrics from another ticker.
         """
         sym = ticker.strip().upper()
-        out: dict[str, float | None] = {
-            "f1": None,
-            "roc_auc": None,
-            "precision": None,
-            "recall": None,
-        }
+        metric_keys = (
+            "accuracy",
+            "f1",
+            "roc_auc",
+            "pr_auc",
+            "pr_auc_minus_prevalence",
+            "brier",
+            "precision",
+            "recall",
+            "ece",
+            "precision_at_k",
+            "recall_at_k",
+            "ic_mean",
+            "rank_ic_mean",
+            "ic_mean_neg_score",
+            "rank_ic_mean_neg_score",
+            "test_prevalence_positive",
+            "long_short_spread",
+        )
+        out: dict[str, float | None] = {k: None for k in metric_keys}
         seen: set[str] = set()
         ordered: list[TrainingRun] = []
 
@@ -452,6 +476,14 @@ class TrainingService:
                 return
             seen.add(run.run_id)
             ordered.append(run)
+
+        def fill_from(m: dict[str, Any]) -> dict[str, float | None] | None:
+            if _metric(m, "f1") is None and _metric(m, "roc_auc") is None:
+                return None
+            filled = {k: None for k in metric_keys}
+            for k in metric_keys:
+                filled[k] = _metric(m, k)
+            return filled
 
         _, run_id = await self.resolve_inference_artifact(model_id)
         if run_id:
@@ -464,16 +496,10 @@ class TrainingService:
         for run in ordered:
             if run.status != "completed" or not run.metrics:
                 continue
-            m = run.metrics
-            if _metric(m, "f1") is None and _metric(m, "roc_auc") is None:
-                continue
-            out["f1"] = _metric(m, "f1")
-            out["roc_auc"] = _metric(m, "roc_auc")
-            out["precision"] = _metric(m, "precision")
-            out["recall"] = _metric(m, "recall")
-            return out
+            got = fill_from(run.metrics)
+            if got is not None:
+                return got
 
-        # Плоские joblib после train_flat_demo_model.py: experiment store часто memory и пуст в API.
         sidecar = Path(get_settings().model_dir).resolve() / f"{model_id.value}.metrics.json"
         if sidecar.is_file():
             try:
@@ -481,13 +507,9 @@ class TrainingService:
             except (json.JSONDecodeError, OSError, TypeError):
                 raw = {}
             if isinstance(raw, dict) and str(raw.get("ticker", "")).strip().upper() == sym:
-                if _metric(raw, "f1") is not None or _metric(raw, "roc_auc") is not None:
-                    return {
-                        "f1": _metric(raw, "f1"),
-                        "roc_auc": _metric(raw, "roc_auc"),
-                        "precision": _metric(raw, "precision"),
-                        "recall": _metric(raw, "recall"),
-                    }
+                got = fill_from(raw)
+                if got is not None:
+                    return got
         return out
 
     async def promote_champion(
@@ -646,9 +668,14 @@ def _metric(metrics: dict[str, Any], name: str) -> float | None:
     if raw is None:
         return None
     try:
-        return float(raw)
+        v = float(raw)
     except (TypeError, ValueError):
         return None
+    if v != v:  # NaN
+        return None
+    if abs(v) == float("inf"):
+        return None
+    return v
 
 
 def _prepare_training_frames(

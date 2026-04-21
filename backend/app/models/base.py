@@ -39,6 +39,7 @@ class BaseMLModel(ABC):
     def evaluate(self, X: pd.DataFrame, y: pd.Series) -> dict:
         """Метрики: F1, ROC-AUC, PR-AUC, Brier, precision, recall."""
         from sklearn.metrics import (
+            accuracy_score,
             average_precision_score,
             brier_score_loss,
             f1_score,
@@ -50,6 +51,7 @@ class BaseMLModel(ABC):
         y_pred = self.predict(X)
         y_proba = self.predict_proba(X)[:, 1]
         out: dict[str, float] = {
+            "accuracy": float(accuracy_score(y, y_pred)),
             "f1": float(f1_score(y, y_pred)),
             "roc_auc": float(roc_auc_score(y, y_proba)),
             "precision": float(precision_score(y, y_pred)),

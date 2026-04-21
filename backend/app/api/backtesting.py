@@ -191,17 +191,26 @@ async def preflight_backtest_ticker(
 )
 async def run_backtest(
     ticker: str,
-    model: ModelId = Query(ModelId.MODEL_D),
+    model: str = Query(
+        ModelId.MODEL_D.value,
+        description="Rollout model id (model_a..model_f) or baseline_buy_hold / baseline_ma_200",
+    ),
     start_date: date | None = Query(None, description="YYYY-MM-DD"),
     end_date: date | None = Query(None, description="YYYY-MM-DD"),
     initial_capital: float = Query(10000.0, ge=100),
     service: BacktestingService = Depends(get_backtesting_service),
 ):
+    from app.schemas.backtest import validate_backtest_model_id
+
     sym = ticker.strip().upper()
+    try:
+        model_key = validate_backtest_model_id(model)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     logger.info(
         "backtesting.run start ticker={} model={} start={} end={} initial_capital={}",
         sym,
-        model.value,
+        model_key,
         start_date,
         end_date,
         initial_capital,
@@ -209,7 +218,7 @@ async def run_backtest(
     try:
         resp = await service.run_single(
             ticker=ticker,
-            model=model,
+            model=model_key,
             start_date=start_date,
             end_date=end_date,
             initial_capital=initial_capital,
@@ -217,18 +226,18 @@ async def run_backtest(
         logger.info(
             "backtesting.run done ticker={} model={} sharpe={} trades={}",
             sym,
-            model.value,
+            model_key,
             resp.metrics.sharpe_ratio,
             resp.metrics.total_trades,
         )
         return resp
     except BacktestDependencyError as e:
         logger.warning(
-            "backtesting.run dependency_error ticker={} model={} err={}", sym, model.value, e
+            "backtesting.run dependency_error ticker={} model={} err={}", sym, model_key, e
         )
         raise HTTPException(status_code=404, detail=str(e)) from e
     except BacktestInputError as e:
-        logger.warning("backtesting.run input_error ticker={} model={} err={}", sym, model.value, e)
+        logger.warning("backtesting.run input_error ticker={} model={} err={}", sym, model_key, e)
         raise HTTPException(status_code=422, detail=str(e)) from e
 
 

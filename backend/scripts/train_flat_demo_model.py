@@ -113,7 +113,25 @@ async def _train_one_flat(svc, sym: str, mid) -> Path:
     metrics_path = flat.parent / f"{mid.value}.metrics.json"
     if done.metrics:
         payload: dict[str, str | float] = {"ticker": sym}
-        for key in ("f1", "roc_auc", "precision", "recall"):
+        for key in (
+            "accuracy",
+            "f1",
+            "roc_auc",
+            "pr_auc",
+            "pr_auc_minus_prevalence",
+            "brier",
+            "precision",
+            "recall",
+            "ece",
+            "precision_at_k",
+            "recall_at_k",
+            "ic_mean",
+            "rank_ic_mean",
+            "ic_mean_neg_score",
+            "rank_ic_mean_neg_score",
+            "test_prevalence_positive",
+            "long_short_spread",
+        ):
             v = _metric_float(done.metrics, key)
             if v is not None:
                 payload[key] = v

@@ -33,7 +33,18 @@ def financial_selection_metrics(
     date_col: str = "date",
     top_q: float = 0.2,
     bottom_q: float = 0.2,
+    label_return_threshold: float | None = None,
 ) -> dict[str, float]:
+    """
+    Cross-sectional top/bottom quantile portfolio means by date.
+
+    ``hit_rate_top_quantile`` is the mean fraction of names in the top bucket whose
+    **forward return is strictly positive** (sign hit), averaged across dates.
+
+    If ``label_return_threshold`` is set (e.g. ``0.01`` for a +1% cumulative label),
+    ``hit_rate_top_quantile_above_threshold`` reports the same but for returns **above**
+    that threshold, aligned with a binary target ``(return > threshold)``.
+    """
     if frame.empty:
         return {}
     d = frame[[date_col, score_col, return_col]].dropna().copy()
@@ -42,6 +53,7 @@ def financial_selection_metrics(
     top_returns: list[float] = []
     bottom_returns: list[float] = []
     hit_rates: list[float] = []
+    hit_rates_thr: list[float] = []
     for _, g in d.groupby(date_col):
         g = g.sort_values(score_col, ascending=False)
         n = len(g)
@@ -52,15 +64,21 @@ def financial_selection_metrics(
         top_returns.append(float(top.mean()))
         bottom_returns.append(float(bottom.mean()))
         hit_rates.append(float((top > 0.0).mean()))
+        if label_return_threshold is not None:
+            thr = float(label_return_threshold)
+            hit_rates_thr.append(float((top > thr).mean()))
     top_mean = float(np.mean(top_returns)) if top_returns else float("nan")
     bottom_mean = float(np.mean(bottom_returns)) if bottom_returns else float("nan")
     spread = top_mean - bottom_mean
-    return {
+    out: dict[str, float] = {
         "top_quantile_return": top_mean,
         "bottom_quantile_return": bottom_mean,
         "long_short_spread": float(spread),
         "hit_rate_top_quantile": float(np.mean(hit_rates)) if hit_rates else float("nan"),
     }
+    if label_return_threshold is not None and hit_rates_thr:
+        out["hit_rate_top_quantile_above_threshold"] = float(np.mean(hit_rates_thr))
+    return out
 
 
 def information_coefficient_metrics(
@@ -69,12 +87,22 @@ def information_coefficient_metrics(
     score_col: str = "score",
     return_col: str = "forward_return",
     date_col: str = "date",
+    include_negated_score: bool = False,
 ) -> dict[str, float]:
+    """
+    Mean cross-sectional Pearson (IC) and Spearman (Rank IC) by date.
+
+    With ``include_negated_score=True``, also reports IC using ``-score`` as a sanity
+    check: for consistent estimation, ``ic_mean_neg_score`` should approximate
+    ``-ic_mean`` (same for Rank IC) up to tie / numerical effects.
+    """
     d = frame[[date_col, score_col, return_col]].dropna().copy()
     if d.empty:
         return {}
     ic_vals: list[float] = []
     rank_ic_vals: list[float] = []
+    ic_neg_vals: list[float] = []
+    rank_ic_neg_vals: list[float] = []
     for _, g in d.groupby(date_col):
         if len(g) < 3:
             continue
@@ -84,10 +112,23 @@ def information_coefficient_metrics(
             ic_vals.append(float(ic))
         if pd.notna(ric):
             rank_ic_vals.append(float(ric))
-    return {
+        if include_negated_score:
+            icn = (-g[score_col]).corr(g[return_col], method="pearson")
+            ricn = (-g[score_col]).corr(g[return_col], method="spearman")
+            if pd.notna(icn):
+                ic_neg_vals.append(float(icn))
+            if pd.notna(ricn):
+                rank_ic_neg_vals.append(float(ricn))
+    out: dict[str, float] = {
         "ic_mean": float(np.mean(ic_vals)) if ic_vals else float("nan"),
         "rank_ic_mean": float(np.mean(rank_ic_vals)) if rank_ic_vals else float("nan"),
     }
+    if include_negated_score:
+        out["ic_mean_neg_score"] = float(np.mean(ic_neg_vals)) if ic_neg_vals else float("nan")
+        out["rank_ic_mean_neg_score"] = (
+            float(np.mean(rank_ic_neg_vals)) if rank_ic_neg_vals else float("nan")
+        )
+    return out
 
 
 def reliability_curve_and_ece(
