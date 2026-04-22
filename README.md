@@ -255,6 +255,48 @@ uv run uvicorn main:app --reload
 # then open /docs and run backtesting endpoints
 ```
 
+## Research extension layer (optional)
+
+The production pipeline stays unchanged. Experimental ranking/regression research is isolated in
+`backend/app/research_models/` and launched only via a dedicated CLI.
+
+Example runs (from `backend/`):
+
+```bash
+# 1) Baseline classification + top-k execution
+uv run python scripts/run_research_experiment.py \
+  --research_mode \
+  --tickers AAPL MSFT NVDA AMZN \
+  --model_type classification \
+  --strategy_type top_k \
+  --top_k_pct 0.2 \
+  --rebalance_every weekly \
+  --score_normalization
+
+# 2) Regression model aligned to fwd_5d + hold_5d execution
+uv run python scripts/run_research_experiment.py \
+  --research_mode \
+  --tickers AAPL MSFT NVDA AMZN \
+  --model_type regression \
+  --strategy_type hold_5d \
+  --top_k_pct 0.2 \
+  --hold_days 5
+
+# 3) Compare classification/regression/ranking in one command
+uv run python scripts/run_research_experiment.py \
+  --research_mode \
+  --tickers AAPL MSFT NVDA AMZN \
+  --strategy_type top_k \
+  --top_k_pct 0.2 \
+  --compare_all
+```
+
+Artifacts are written to `backend/research_outputs/...`:
+- `summary.json` (metrics + strategy metrics + diagnostics flags)
+- `predictions.csv` (scores + targets)
+- `strategy_daily.csv` (equity curve inputs)
+- `decile_table.csv`, `regime_ic.csv`, `diagnostics_summary.md`, `decile_mean_fwd5d.png`
+
 ## Disclaimer
 
 Проект разработан в образовательных целях. Не является торговым советником и не гарантирует прибыль.

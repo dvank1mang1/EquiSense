@@ -1,0 +1,53 @@
+{
+  "config": {
+    "hold_days": 5,
+    "max_turnover": null,
+    "model_type": "regression",
+    "output_dir": "research_outputs",
+    "rebalance_every": "weekly",
+    "research_mode": true,
+    "score_normalization": true,
+    "strategy_type": "top_k",
+    "threshold": 0.55,
+    "tickers": [
+      "AAPL",
+      "MSFT",
+      "NVDA",
+      "AMZN"
+    ],
+    "top_k_pct": 0.2
+  },
+  "diagnostics": {
+    "bottom_decile_mean_fwd_5d": -0.013320452554063477,
+    "ic_mean": -0.020550246975289628,
+    "ic_mean_neg_score": 0.020550246975289628,
+    "monotonic_top_gt_bottom": true,
+    "rank_ic_mean": -0.024913494809688574,
+    "rank_ic_mean_neg_score": 0.024913494809688574,
+    "signal_looks_inverted": true,
+    "top_decile_mean_fwd_5d": 0.06802630212222006
+  },
+  "diagnostics_report": "/Users/kirill/EquiSense/backend/research_outputs/regression_top_k_20260422T071348Z/diagnostics_summary.md",
+  "metrics": {
+    "bottom_quantile_return": -0.013320452554063479,
+    "class_prevalence": 0.4930795847750865,
+    "hit_rate_top_quantile": 0.4429065743944637,
+    "hit_rate_top_quantile_above_threshold": 0.4429065743944637,
+    "ic_mean": -0.020550246975289628,
+    "ic_mean_neg_score": 0.020550246975289628,
+    "long_short_spread": 0.08134675467628355,
+    "pr_auc": 0.493093834723915,
+    "pr_auc_vs_baseline": 1.4249948828481962e-05,
+    "rank_ic_mean": -0.024913494809688574,
+    "rank_ic_mean_neg_score": 0.024913494809688574,
+    "roc_auc": 0.4738728219867073,
+    "top_quantile_return": 0.06802630212222008
+  },
+  "strategy_metrics": {
+    "annualized_return": 2.7156468736601793,
+    "cumulative_return": 3.5053648327574676,
+    "max_drawdown": -0.2052048285648811,
+    "sharpe": 0.9194388433905659,
+    "turnover": 0.14878892733564014
+  }
+}
