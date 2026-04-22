@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import numpy as np
@@ -9,6 +10,9 @@ import pandas as pd
 from loguru import logger
 
 from app.core.config import settings
+
+_ENGINE_LOCK = threading.Lock()
+_ENGINE_SINGLETON: "SentimentFeatureEngineer | None" = None
 
 
 def _finbert_device() -> Any:
@@ -245,7 +249,12 @@ def attach_finbert_to_news_items(items: list[dict[str, Any]]) -> None:
             pending.append(i)
     if not pending:
         return
-    eng = SentimentFeatureEngineer()
+    global _ENGINE_SINGLETON
+    if _ENGINE_SINGLETON is None:
+        with _ENGINE_LOCK:
+            if _ENGINE_SINGLETON is None:
+                _ENGINE_SINGLETON = SentimentFeatureEngineer()
+    eng = _ENGINE_SINGLETON
     texts = [_article_text(items[i]).strip() or " " for i in pending]
     scored = eng.score_batch(texts)
     for i, sc in zip(pending, scored, strict=True):

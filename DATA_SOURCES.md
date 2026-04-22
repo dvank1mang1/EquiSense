@@ -16,6 +16,31 @@ This repository keeps a single canonical OHLCV schema under `data/raw/ohlcv/{TIC
 - **Alpha Vantage** `TIME_SERIES_DAILY` when `ALPHA_VANTAGE_API_KEY` is set (rate-limited; used as fallback in `fetch_ohlcv_auto`).
 - **Vega public sample / Plotly demo:** tiny datasets for offline UI smoke tests only (not for research coverage).
 
+## Kaggle file bundles (no in-process yfinance)
+
+Use when you want **versioned files from Kaggle** instead of live Yahoo scraping.
+
+1. Install the optional helper: `uv sync --group datasets` (adds [`kagglehub`](https://github.com/Kaggle/kagglehub)).
+2. Import one OHLCV file per ticker (small downloads; no full 25 GB unzip):
+
+```bash
+cd backend
+uv run --group datasets python scripts/download_ohlcv_dataset.py kagglehub-file \
+  --handle jacksoncrow/stock-market-dataset \
+  --path-template stocks/{ticker}.csv \
+  --tickers AAPL MSFT NVDA \
+  --merge-existing \
+  --run-etl
+```
+
+- **`jacksoncrow/stock-market-dataset`**: public daily OHLCV under `stocks/{TICKER}.csv` through about **2020-04** (Yahoo-style columns: `Date`, `Open`, …, `Adj Close`, `Volume`).
+- **`--merge-existing`**: merges with existing `data/raw/ohlcv/{TICKER}.parquet` on **calendar date** (dedupe, keep last). Use this to **fill holes** when you already have a recent tail from another source.
+- **Boris layout** (older history, ends ~2017): `--handle borismarjanovic/price-volume-data-for-all-us-stocks-etfs` and `--path-template Data/Stocks/{ticker_lower}.us.txt`.
+
+Other Kaggle OHLCV bundles often require a logged-in Kaggle account (`~/.kaggle/kaggle.json` or env). Point `--handle` / `--path-template` at any dataset that exposes one CSV (or `.us.txt`) per symbol.
+
+**Note:** `tanavbajaj/yahoo-finance-all-stocks-dataset-daily-update` is also public per `TICKER.csv`, but the version visible without auth may lag; prefer handles you can refresh with your own Kaggle credentials if you need the latest calendar year.
+
 ## Validation
 
 - `uv run python backend/scripts/print_ohlcv_coverage.py` — min/max dates and row counts per ticker.

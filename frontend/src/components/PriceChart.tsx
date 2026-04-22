@@ -2,6 +2,7 @@
 import dynamic from "next/dynamic";
 import ApiErrorNotice from "@/components/ApiErrorNotice";
 import { usePriceHistory } from "@/hooks/useStockData";
+import { lineSeriesWithGapBreaks } from "@/lib/chartGapBreaks";
 import { useState } from "react";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
@@ -25,6 +26,21 @@ export default function PriceChart({ ticker }: PriceChartProps) {
   const candles = Array.isArray(data?.candles) ? data.candles : [];
   const dates = candles.map((c: { date: string }) => c.date);
   const closes = candles.map((c: { close: number }) => c.close);
+  const meta = data?.meta as { rows?: number; warnings?: string[] } | undefined;
+  const { x: plotDates, y: plotCloses } = lineSeriesWithGapBreaks(dates, closes, 10);
+
+  const qualityNotes = (meta?.warnings ?? []).map((w) => {
+    switch (w) {
+      case "long_calendar_gaps":
+        return "Большие календарные разрывы между барами — в кэше OHLCV дырка по датам. Перезагрузите ряд (скрипт download_ohlcv_dataset или refresh в UI).";
+      case "sparse_daily_bars":
+        return "Очень мало дневных точек на длинном интервале — график может выглядеть как прямая. Обновите OHLCV (refresh-universe).";
+      case "constant_close":
+        return "Close не меняется по выборке — проверьте кэш OHLCV.";
+      default:
+        return w;
+    }
+  });
 
   return (
     <div>
@@ -69,13 +85,30 @@ export default function PriceChart({ ticker }: PriceChartProps) {
         </div>
       ) : (
         <div aria-label={`График цены закрытия ${ticker}, период ${period}`}>
+          {qualityNotes.length > 0 ? (
+            <div
+              className="mb-3 rounded-lg border border-amber-500/25 bg-amber-950/20 px-3 py-2 text-xs leading-relaxed text-amber-100/90"
+              role="status"
+            >
+              <p className="font-medium text-amber-100/95">Качество ряда цен</p>
+              <ul className="mt-1 list-inside list-disc text-slate-300">
+                {qualityNotes.map((t) => (
+                  <li key={t}>{t}</li>
+                ))}
+              </ul>
+              {typeof meta?.rows === "number" ? (
+                <p className="mt-1.5 font-mono text-[10px] text-slate-500">rows={meta.rows}</p>
+              ) : null}
+            </div>
+          ) : null}
           <Plot
             data={[
               {
-                x: dates,
-                y: closes,
+                x: plotDates,
+                y: plotCloses,
                 type: "scatter",
                 mode: "lines",
+                connectgaps: false,
                 line: { color: "#0ea5e9", width: 2 },
                 name: ticker,
               },
@@ -83,12 +116,29 @@ export default function PriceChart({ ticker }: PriceChartProps) {
             layout={{
               height: 300,
               paper_bgcolor: "transparent",
-              plot_bgcolor: "transparent",
+              plot_bgcolor: "rgba(15,23,42,0.25)",
               font: { color: "#94a3b8", size: 12 },
-              xaxis: { gridcolor: "#334155", showgrid: true },
-              yaxis: { gridcolor: "#334155", showgrid: true },
+              xaxis: {
+                gridcolor: "rgba(51,65,85,0.35)",
+                showgrid: true,
+                zeroline: false,
+                showline: true,
+                linecolor: "rgba(71,85,105,0.5)",
+              },
+              yaxis: {
+                gridcolor: "rgba(51,65,85,0.35)",
+                showgrid: true,
+                zeroline: false,
+                showline: true,
+                linecolor: "rgba(71,85,105,0.5)",
+              },
               margin: { t: 10, b: 40, l: 60, r: 10 },
               showlegend: false,
+              hoverlabel: {
+                bgcolor: "rgba(30,41,59,0.92)",
+                bordercolor: "rgba(100,116,139,0.45)",
+                font: { color: "#e2e8f0", size: 12 },
+              },
             }}
             config={{ displayModeBar: false, responsive: true }}
             style={{ width: "100%" }}

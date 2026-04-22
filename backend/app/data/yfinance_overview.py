@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.config import settings
+from app.data.yfinance_session import ensure_yfinance_session
+
 
 def yfinance_av_overview_patch(ticker: str) -> dict[str, Any]:
     """
@@ -19,7 +22,9 @@ def yfinance_av_overview_patch(ticker: str) -> dict[str, Any]:
 
     info: dict[str, Any] = {}
     try:
-        raw = yf.Ticker(sym).info
+        ensure_yfinance_session()
+        proxy_url = (settings.yfinance_proxy_url or "").strip() or None
+        raw = yf.Ticker(sym, proxy=proxy_url).info
         if isinstance(raw, dict):
             info = raw
     except Exception:

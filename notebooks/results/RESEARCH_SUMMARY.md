@@ -27,20 +27,20 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - **IC, Rank IC, precision@k, quantile / long–short spread** use the same horizon: `forward_return` in evaluation frames is **`fwd_5d`**, not next-day `ret_1d`.
 - **Equal-weight backtests, DM, SPA-lite** use **daily** `ret_1d` (execution / reporting horizon); do not equate that PnL horizon with the 5-day label unless you redesign the strategy to hold 5 days.
 - Walk-forward expanding splits and purged k-fold reduce overlap between train and test in time.
-- Threshold for strategy (`p >= 0.58`) chosen on **validation** only, **not** on holdout.
+- Threshold for strategy (`p >= 0.46`) chosen on **validation** only, **not** on holdout.
 
 ## Holdout — classification (best row by Rank IC)
-- **xgboost_optuna**: prevalence=0.3900, pr_auc=0.3939 (pr_auc − prevalence=0.0039), roc_auc=0.4984
+- **random_forest_optuna**: prevalence=0.3900, pr_auc=0.4103 (pr_auc − prevalence=0.0203), roc_auc=0.5110
 
 ## Holdout — ranking / 5d forward return (same horizon as label)
-- **xgboost_optuna**: ic=0.0324, rank_ic=0.0379, precision@k (per-date top 20% by score)=0.3962, long_short_spread=0.038182
+- **random_forest_optuna**: ic=0.0308, rank_ic=0.0415, precision@k (per-date top 20% by score)=0.4412, long_short_spread=0.048589
 - Pooled-row precision (legacy, not comparable to IC) is in `model_metrics.csv` as `precision_at_k_pooled_top25pct_rows`.
 
 ## Cross-validation (mean Rank IC across folds)
 - Walk-forward: **0.0119**
 - Purged k-fold: **0.0094**
 - Purged k-fold + horizon: **0.0060**
-- CPCV (combinatorial purged, full features): **0.0095**
+- CPCV (combinatorial purged, full features): **0.0054**
 
 ## Ablations (feature groups)
 - `tech_only`: 21 features
@@ -48,22 +48,22 @@ See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
 - `full`: 31 features
 
 ## Backtest (holdout, equal-weight, costs 2.0 bps per side on turnover)
-- Strategy equity (net): **0.887** vs buy-and-hold **3.672**
-- Meta-gated strategy equity (net): **1.005**
-- Relative uplift vs B&H: **-75.85%**
-- Net Sharpe (ann.): **-2.484**
-- Meta Net Sharpe (ann.): **1.031**
-- Max DD (net): **-0.1188**
+- Strategy equity (net): **0.851** vs buy-and-hold **3.672**
+- Meta-gated strategy equity (net): **0.997**
+- Relative uplift vs B&H: **-76.82%**
+- Net Sharpe (ann.): **-2.360**
+- Meta Net Sharpe (ann.): **-0.439**
+- Max DD (net): **-0.1566**
 
 ## Diebold–Mariano (daily next-day universe sign vs forecast log-loss)
-- DM stat: **1.2751**
-- p-value (two-sided): **2.0229e-01**
-- Meta DM stat: **6.9337**
-- Meta p-value (two-sided): **4.1003e-12**
+- DM stat: **1.4539**
+- p-value (two-sided): **1.4597e-01**
+- Meta DM stat: **8.7372**
+- Meta p-value (two-sided): **2.3887e-18**
 
 ## SPA-lite (block bootstrap on daily excess vs buy&hold)
-- Observed mean excess: **-0.009618**
-- One-sided p-value (H1: mean > 0): **0.5800**
+- Observed mean excess: **-0.009756**
+- One-sided p-value (H1: mean > 0): **0.5200**
 
 ## Interpretation (auto-generated checklist)
 - **Horizons:** ranking metrics above use the same 5-day `fwd_5d` as the label; if IC/Rank IC and quantile spread still disagree, that is more likely **noise / weak signal / calibration** than a 1d-vs-5d definition bug.

@@ -13,7 +13,7 @@ from app.contracts.data_providers import (
 from app.core.config import settings
 from app.data.local_artifacts import summarize_data_artifacts
 from app.data.news_filter import filter_news_for_ticker
-from app.data.periods import ohlcv_tail_by_period
+from app.data.periods import ohlcv_series_quality_hints, ohlcv_tail_by_period, sanitize_ohlcv_dataframe
 from app.data.persistence import (
     list_cached_ohlcv_tickers,
     read_fundamentals_json,
@@ -185,14 +185,30 @@ async def get_price_history(
         except (DataProviderError, UpstreamRateLimitError) as e:
             _raise_http_from_data_error(e)
 
+    df = sanitize_ohlcv_dataframe(df)
+    if df.empty:
+        raise HTTPException(
+            status_code=503,
+            detail="OHLCV has no usable rows after normalizing dates and close prices.",
+        )
+
     if period and period not in ("1m", "3m", "6m", "1y", "2y", "max"):
         raise HTTPException(status_code=422, detail="Invalid period")
 
     sliced = ohlcv_tail_by_period(df, period or "1y")
+    warnings = ohlcv_series_quality_hints(sliced)
+    first_d = sliced["date"].iloc[0] if len(sliced) else None
+    last_d = sliced["date"].iloc[-1] if len(sliced) else None
     return {
         "ticker": sym,
         "period": period,
         "candles": ohlcv_rows(sliced),
+        "meta": {
+            "rows": int(len(sliced)),
+            "first_date": first_d.strftime("%Y-%m-%d") if first_d is not None else None,
+            "last_date": last_d.strftime("%Y-%m-%d") if last_d is not None else None,
+            "warnings": warnings,
+        },
     }
 
 
@@ -248,12 +264,19 @@ async def get_news(
     if settings.news_finbert_enabled and items:
 
         def _run_finbert() -> None:
-            try:
-                attach_finbert_to_news_items(items)
-            except Exception as e:
-                logger.warning("stocks.news FinBERT failed ticker={}: {}", sym, e)
+            attach_finbert_to_news_items(items)
 
-        await asyncio.to_thread(_run_finbert)
+        try:
+            # Do not block the news endpoint while model downloads/warmup happens.
+            await asyncio.wait_for(asyncio.to_thread(_run_finbert), timeout=8.0)
+        except TimeoutError:
+            logger.warning(
+                "stocks.news FinBERT timed out ticker={} limit={} -> returning headlines without sentiment",
+                sym,
+                limit,
+            )
+        except Exception as e:
+            logger.warning("stocks.news FinBERT failed ticker={}: {}", sym, e)
 
     return {"ticker": sym, "news": items, "warning": warning}
 
@@ -339,6 +362,12 @@ async def get_technical_indicators(
     if df is None or df.empty:
         raise HTTPException(
             status_code=503, detail="No OHLCV data available for indicator calculation."
+        )
+
+    df = sanitize_ohlcv_dataframe(df)
+    if df.empty:
+        raise HTTPException(
+            status_code=503, detail="No OHLCV rows after normalizing dates and close prices.",
         )
 
     engineer = TechnicalFeatureEngineer()

@@ -4,13 +4,17 @@ import asyncio
 import json
 from datetime import date
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
 
+from app.data.market_data import MarketDataClient
 from app.domain.exceptions import BacktestDependencyError, BacktestInputError
 from app.domain.identifiers import ModelId
+from app.features.feature_store import FeatureStore
 from app.jobs.backtest_store import BacktestStore
-from app.jobs.queue import get_job_queue, safe_get_job
+from app.jobs.queue import InMemoryJobQueue, get_job_queue, safe_get_job
+from app.jobs.run_ids import new_run_id
 from app.schemas.backtest import (
     BacktestCompareEntry,
     BacktestCompareResponse,
@@ -32,11 +36,33 @@ router = APIRouter()
 _ALLOWED_JOB_STATUSES = {"queued", "running", "completed", "failed"}
 
 
-def _new_run_id() -> str:
-    # Reuse timestamp-based ids similar to jobs.refresh-universe
-    from datetime import UTC, datetime
+async def _run_in_memory_backtest_job(run_id: str, payload: BacktestJobPayload) -> None:
+    """When job_queue is in-memory, there is no worker: run backtest here and update queue status."""
+    queue = get_job_queue()
+    if not isinstance(queue, InMemoryJobQueue):
+        return
 
-    return datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+    store = BacktestStore()
+    timeout = httpx.Timeout(120.0, connect=15.0)
+    limits = httpx.Limits(max_connections=16, max_keepalive_connections=8)
+    async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as http:
+        market = MarketDataClient(http=http)
+        service = BacktestingService(market=market, features=FeatureStore())
+        try:
+            resp = await service.run_single(
+                ticker=payload.ticker,
+                model=payload.model,
+                start_date=payload.start_date,
+                end_date=payload.end_date,
+                initial_capital=payload.initial_capital,
+            )
+            await asyncio.to_thread(store.save, run_id, resp)
+            await asyncio.to_thread(queue.mark_completed, run_id)
+        except (BacktestDependencyError, BacktestInputError) as e:
+            await asyncio.to_thread(queue.mark_failed, run_id, str(e))
+        except Exception as e:  # noqa: BLE001
+            logger.exception("In-memory backtest job failed run_id={}", run_id)
+            await asyncio.to_thread(queue.mark_failed, run_id, str(e))
 
 
 # Static /jobs* must be registered before /{ticker}, otherwise ticker="jobs" steals the path.
@@ -402,7 +428,7 @@ async def enqueue_backtest_job(
     body: BacktestRunJobBody,
 ):
     """
-    Create a backtest job in the shared PostgresJobQueue.
+    Enqueue a backtest job (Postgres job_queue + worker) or run it in-process (in-memory queue).
 
     Body: { model, start_date?, end_date?, initial_capital? }.
     """
@@ -412,7 +438,7 @@ async def enqueue_backtest_job(
     end_date = body.end_date
     initial_capital = body.initial_capital
 
-    run_id = _new_run_id()
+    run_id = new_run_id()
     queue = get_job_queue()
     payload = BacktestJobPayload(
         type="backtest_single",
@@ -424,5 +450,7 @@ async def enqueue_backtest_job(
         initial_capital=initial_capital,
     )
     await asyncio.to_thread(queue.enqueue, run_id, payload.model_dump(mode="json"))
+    if isinstance(queue, InMemoryJobQueue):
+        await _run_in_memory_backtest_job(run_id, payload)
     status = await asyncio.to_thread(queue.status, run_id)
     return {"job_id": run_id, "status": status or "queued"}

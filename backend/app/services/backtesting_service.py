@@ -16,6 +16,7 @@ from app.backtesting.engine import BacktestEngine
 from app.contracts.data_providers import MarketDataProvider
 from app.contracts.features import FeatureStorePort
 from app.core.config import settings
+from app.data.periods import sanitize_ohlcv_dataframe
 from app.data.persistence import read_ohlcv_parquet
 from app.data.utils import normalize_ticker
 from app.domain.exceptions import BacktestDependencyError, BacktestInputError
@@ -151,7 +152,9 @@ class BacktestingService:
             raw_price = await self._market.get_daily_ohlcv(
                 ticker, output_size="full", skip_cache=False
             )
-        ohlcv = raw_price.copy()
+        ohlcv = sanitize_ohlcv_dataframe(raw_price.copy())
+        if ohlcv.empty:
+            raise BacktestDependencyError("OHLCV is empty after normalizing dates and close prices")
         ohlcv["date"] = pd.to_datetime(ohlcv["date"])
         if "volume" not in ohlcv.columns:
             ohlcv["volume"] = 0.0

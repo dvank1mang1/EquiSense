@@ -9,7 +9,15 @@ from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.services.db_unreachable import is_benign_database_unreachable
 from app.services.training_service import TrainingRun
+
+
+def _log_primary_store_failure(action: str, exc: Exception) -> None:
+    if is_benign_database_unreachable(exc):
+        logger.debug("Experiment {} skipped primary store (DB unreachable): {}", action, exc)
+    else:
+        logger.warning("Experiment {} failed in primary store: {}", action, exc)
 
 
 class ExperimentStore(Protocol):
@@ -217,7 +225,7 @@ class ResilientExperimentStore:
         try:
             await self._primary.upsert(run)
         except Exception as e:  # noqa: BLE001
-            logger.warning("Experiment upsert failed in primary store: {}", e)
+            _log_primary_store_failure("upsert", e)
 
     async def get(self, run_id: str) -> TrainingRun | None:
         run = await self._fallback.get(run_id)
@@ -226,7 +234,7 @@ class ResilientExperimentStore:
         try:
             return await self._primary.get(run_id)
         except Exception as e:  # noqa: BLE001
-            logger.warning("Experiment get failed in primary store: {}", e)
+            _log_primary_store_failure("get", e)
             return None
 
     async def list_runs(
@@ -238,5 +246,5 @@ class ResilientExperimentStore:
         try:
             return await self._primary.list_runs(model_id=model_id, ticker=ticker, limit=limit)
         except Exception as e:  # noqa: BLE001
-            logger.warning("Experiment list failed in primary store: {}", e)
+            _log_primary_store_failure("list", e)
             return []

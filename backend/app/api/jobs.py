@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
@@ -12,6 +11,7 @@ from app.core.config import settings
 from app.jobs.batch_refresh import (
     BatchRefreshOrchestrator,
 )
+from app.jobs.run_ids import new_run_id
 from app.jobs.queue import (
     get_job_queue,
     safe_dead_letter_list,
@@ -38,10 +38,6 @@ class RefreshUniverseBody(BaseModel):
     retry_attempts: int = Field(3, ge=1, le=10)
     retry_wait_sec: float = Field(2.0, ge=0.0, le=120.0)
     background: bool = True
-
-
-def _new_run_id() -> str:
-    return datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 async def _run_job(
@@ -84,7 +80,7 @@ async def refresh_universe(
         retry_attempts=body.retry_attempts,
         retry_wait_sec=body.retry_wait_sec,
     )
-    run_id = _new_run_id()
+    run_id = new_run_id()
 
     if body.background:
         queue = get_job_queue()

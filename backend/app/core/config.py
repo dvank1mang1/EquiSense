@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     news_finbert_enabled: bool = True
     # Alpha Vantage free tier ~5 calls/min — pace all AV endpoints with one limiter
     alpha_vantage_min_interval_sec: float = 12.0
+    # True: yfinance/Finnhub/кэш раньше, Alpha Vantage в конце (экономит дневную квоту AV).
+    alpha_vantage_yfinance_fallback: bool = True
     ohlcv_parquet_cache_max_age_sec: int = 86400
     fundamentals_json_cache_max_age_sec: int = 604800
     quote_json_cache_max_age_sec: int = 120
@@ -116,6 +118,8 @@ class Settings(BaseSettings):
     # auto | cpu | cuda
     finbert_device: str = "auto"
     finbert_batch_size: int = 16
+    # Optional egress proxy for Yahoo endpoints used by yfinance.
+    yfinance_proxy_url: str = ""
 
     # CORS (include Docker frontend on 3002 when host :3000 is busy)
     allowed_origins: list[str] = [
@@ -124,6 +128,8 @@ class Settings(BaseSettings):
         "http://localhost:3002",
         "http://127.0.0.1:3002",
     ]
+    # Доп. Origin по regex (ngrok и т.п.). Переменная окружения: CORS_ALLOW_ORIGIN_REGEX
+    cors_allow_origin_regex: str | None = None
 
 
 @lru_cache

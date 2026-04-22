@@ -7,6 +7,7 @@ import {
   useBacktestJob,
   useBacktestPreflight,
 } from "@/hooks/useBacktestJob";
+import { pairedLineSeriesWithGapBreaks } from "@/lib/chartGapBreaks";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 
@@ -226,6 +227,9 @@ export default function BacktestChart({ ticker, model, variant = "ml" }: Backtes
   const dates = result.equity_curve.map((p: any) => p.date);
   const equity = result.equity_curve.map((p: any) => p.equity);
   const benchmark = result.equity_curve.map((p: any) => p.benchmark_equity);
+  const { x: plotDates, ys } = pairedLineSeriesWithGapBreaks(dates, 10, equity, benchmark);
+  const plotEquity = ys[0] ?? [];
+  const plotBenchmark = ys[1] ?? [];
 
   const m = result.metrics;
 
@@ -261,18 +265,50 @@ export default function BacktestChart({ ticker, model, variant = "ml" }: Backtes
       <div aria-label={`Кривая капитала бэктеста ${ticker}, модель ${model}`}>
         <Plot
           data={[
-            { x: dates, y: equity, type: "scatter", mode: "lines", name: "Стратегия", line: { color: "#0ea5e9", width: 2 } },
-            { x: dates, y: benchmark, type: "scatter", mode: "lines", name: "Buy & Hold", line: { color: "#64748b", width: 1, dash: "dash" } },
+            {
+              x: plotDates,
+              y: plotEquity,
+              type: "scatter",
+              mode: "lines",
+              connectgaps: false,
+              name: "Стратегия",
+              line: { color: "#0ea5e9", width: 2 },
+            },
+            {
+              x: plotDates,
+              y: plotBenchmark,
+              type: "scatter",
+              mode: "lines",
+              connectgaps: false,
+              name: "Buy & Hold",
+              line: { color: "#64748b", width: 1, dash: "dash" },
+            },
           ]}
           layout={{
             height: 300,
             paper_bgcolor: "transparent",
-            plot_bgcolor: "transparent",
+            plot_bgcolor: "rgba(15,23,42,0.25)",
             font: { color: "#94a3b8", size: 12 },
-            xaxis: { gridcolor: "#334155" },
-            yaxis: { gridcolor: "#334155", tickprefix: "$" },
+            xaxis: {
+              gridcolor: "rgba(51,65,85,0.35)",
+              zeroline: false,
+              showline: true,
+              linecolor: "rgba(71,85,105,0.5)",
+            },
+            yaxis: {
+              gridcolor: "rgba(51,65,85,0.35)",
+              zeroline: false,
+              tickprefix: "$",
+              showline: true,
+              linecolor: "rgba(71,85,105,0.5)",
+            },
             margin: { t: 10, b: 40, l: 70, r: 10 },
             legend: { x: 0, y: 1, bgcolor: "transparent" },
+            hoverlabel: {
+              bgcolor: "rgba(30,41,59,0.92)",
+              bordercolor: "rgba(100,116,139,0.45)",
+              font: { color: "#e2e8f0", size: 12 },
+            },
           }}
           config={{ displayModeBar: false, responsive: true }}
           style={{ width: "100%" }}

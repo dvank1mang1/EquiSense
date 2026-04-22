@@ -66,14 +66,6 @@ export default function ModelComparison({ ticker }: ModelComparisonProps) {
 
   return (
     <div className="space-y-6">
-      <p className="text-xs leading-relaxed text-slate-500">
-        Метрики — holdout последнего обучения на этом тикере (эксперименты в Postgres или файл{" "}
-        <span className="font-mono text-[10px]">model_*.metrics.json</span> рядом с joblib после{" "}
-        <span className="font-mono text-[10px]">train_flat_demo_model.py</span>). Цель:{" "}
-        <span className="text-slate-400">P(рост)</span> — завтрашняя доходность &gt; 0 (как в backend
-        training_service).
-      </p>
-
       <div className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Сигналы</h3>
         <div className="overflow-x-auto rounded-xl border border-surface-700/50">
@@ -213,7 +205,10 @@ export default function ModelComparison({ ticker }: ModelComparisonProps) {
         </div>
         <p className="text-[10px] leading-relaxed text-slate-600">
           Prev+ — доля положительного класса на тесте. PR−Prev — средняя точность vs этот baseline
-          (интерпретация PR-AUC). На одном тикере IC по датам часто пустой (одна бумага в сечении).
+          (интерпретация PR-AUC). IC / Rank IC — серийные корреляции (по дням holdout), не
+          кросс-секция; если «—», часто константные вероятности на тесте или слишком мало точек после
+          dropna. L/S spread — разница средних forward return в верхнем и нижнем квантиле по score на
+          holdout (для одного тикера — по времени, не по сечению).
         </p>
       </div>
 

@@ -5,6 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+# Single-name (one row per date) panels: serial score↔return correlation needs enough points;
+# 8 was too strict for typical 70/15/15 time splits on ~1y of daily data (~11 test rows but dropna can cut).
+_MIN_SERIAL_PANEL_OBS = 4
+
 
 def precision_recall_at_k(
     y_true: pd.Series | np.ndarray,
@@ -21,7 +25,8 @@ def precision_recall_at_k(
     hits = int(yt[idx].sum())
     positives = int(yt.sum())
     precision = hits / k_eff
-    recall = (hits / positives) if positives > 0 else float("nan")
+    # No positive labels in holdout → recall is undefined; use 0 so metrics persist and UI shows a number.
+    recall = (hits / positives) if positives > 0 else 0.0
     return {"precision_at_k": float(precision), "recall_at_k": float(recall)}
 
 
@@ -70,6 +75,18 @@ def financial_selection_metrics(
     top_mean = float(np.mean(top_returns)) if top_returns else float("nan")
     bottom_mean = float(np.mean(bottom_returns)) if bottom_returns else float("nan")
     spread = top_mean - bottom_mean
+    # Одна строка на дату (один тикер на holdout): кросс-секционные квантили по дате не информативны.
+    if len(d) >= _MIN_SERIAL_PANEL_OBS and int(d.groupby(date_col).size().max()) == 1:
+        ds = d.sort_values(date_col)
+        n = len(ds)
+        k_top = max(1, int(np.ceil(n * top_q)))
+        k_bottom = max(1, int(np.ceil(n * bottom_q)))
+        ranked = ds.sort_values(score_col, ascending=False)
+        top_s = ranked.iloc[:k_top][return_col]
+        bottom_s = ranked.iloc[-k_bottom:][return_col]
+        top_mean = float(top_s.mean())
+        bottom_mean = float(bottom_s.mean())
+        spread = top_mean - bottom_mean
     out: dict[str, float] = {
         "top_quantile_return": top_mean,
         "bottom_quantile_return": bottom_mean,
@@ -128,6 +145,24 @@ def information_coefficient_metrics(
         out["rank_ic_mean_neg_score"] = (
             float(np.mean(rank_ic_neg_vals)) if rank_ic_neg_vals else float("nan")
         )
+    # Один тикер на дату → группы размером 1, кросс-секционный IC не определён. Тогда считаем
+    # временную корреляцию score vs forward_return по ряду дат (как «serial IC» на holdout).
+    need_ts = (not ic_vals or not rank_ic_vals) and len(d) >= _MIN_SERIAL_PANEL_OBS
+    if need_ts:
+        ds = d.sort_values(date_col)
+        ic_ts = float(ds[score_col].corr(ds[return_col], method="pearson"))
+        ric_ts = float(ds[score_col].corr(ds[return_col], method="spearman"))
+        if not ic_vals and np.isfinite(ic_ts):
+            out["ic_mean"] = ic_ts
+        if not rank_ic_vals and np.isfinite(ric_ts):
+            out["rank_ic_mean"] = ric_ts
+        if include_negated_score:
+            icn_ts = float((-ds[score_col]).corr(ds[return_col], method="pearson"))
+            ricn_ts = float((-ds[score_col]).corr(ds[return_col], method="spearman"))
+            if not ic_neg_vals and np.isfinite(icn_ts):
+                out["ic_mean_neg_score"] = icn_ts
+            if not rank_ic_neg_vals and np.isfinite(ricn_ts):
+                out["rank_ic_mean_neg_score"] = ricn_ts
     return out
 
 

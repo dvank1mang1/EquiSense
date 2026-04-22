@@ -44,10 +44,14 @@ class ShapService:
         normalized = ticker.strip().upper()
 
         model_cls = get_model_class(model_id)
-        instance = model_cls()
+
+        def _load_model() -> object:
+            inst = model_cls()
+            inst.load(artifact_path)
+            return inst
 
         try:
-            instance.load(artifact_path)
+            instance = await asyncio.to_thread(_load_model)
         except FileNotFoundError as e:
             raise ModelArtifactMissingError(
                 f"No trained artifact for {model_id.value}; run training first."
@@ -78,8 +82,11 @@ class ShapService:
         top_features = explainer.get_top_features(shap_vals, top_n=top_n)
         group_contribs = explainer.group_contributions(shap_vals)
 
-        prob_arr = instance.predict_proba(last_row)
-        prediction = float(prob_arr[0, 1])
+        def _positive_proba() -> float:
+            arr = instance.predict_proba(last_row)
+            return float(arr[0, 1])
+
+        prediction = await asyncio.to_thread(_positive_proba)
 
         return ShapExplanationOutcome(
             ticker=normalized,

@@ -18,6 +18,7 @@ from app.contracts.data_providers import (
 from app.contracts.jobs import JobStore
 from app.data.persistence import write_news_json_sync
 from app.domain.exceptions import DataProviderError, UpstreamRateLimitError
+from app.jobs.run_ids import new_run_id
 from app.jobs.store import FileJobStore
 
 
@@ -87,7 +88,7 @@ class BatchRefreshOrchestrator:
         run_etl: bool = False,
         refresh_news: bool = False,
     ) -> tuple[Path, Path]:
-        run_id = run_id or datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+        run_id = run_id or new_run_id()
         status_path = self._store.status_path(run_id)
         lineage_path = self._store.lineage_path(run_id)
         run_started_monotonic = time.monotonic()

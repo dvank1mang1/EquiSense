@@ -1,7 +1,7 @@
 import axios, { isAxiosError, type AxiosError, type AxiosRequestConfig } from "axios";
 import { parseApiErrorBody, type ApiErrorBody } from "@/types/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL?.trim() || "";
 
 function newRequestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -11,7 +11,7 @@ function newRequestId(): string {
 }
 
 export const api = axios.create({
-  baseURL: `${API_BASE}/api/v1`,
+  baseURL: API_BASE ? `${API_BASE}/api/v1` : "/api/v1",
   timeout: 30000,
 });
 

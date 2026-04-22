@@ -1,4 +1,4 @@
-import { getApiError } from "@/lib/api";
+import { getApiError, getClientError } from "@/lib/api";
 
 type Props = {
   error: unknown;
@@ -13,6 +13,10 @@ export default function ApiErrorNotice({
   tone = "danger",
 }: Props) {
   const ae = getApiError(error);
+  const ce = getClientError(error);
+  const raw = (ae?.message ?? ce.message).trim();
+  const detail =
+    raw.length > 0 ? raw : "Проверьте сеть, ключи API и что backend запущен.";
   const shell =
     tone === "warning"
       ? "border border-amber-500/20 border-l-4 border-l-amber-400/30 bg-amber-950/20 text-slate-200 shadow-sm shadow-black/10"
@@ -27,9 +31,7 @@ export default function ApiErrorNotice({
       aria-atomic="true"
     >
       <p className={`text-sm font-medium tracking-tight ${titleCls}`}>{title}</p>
-      <p className="mt-2 text-sm leading-relaxed text-slate-400">
-        {ae?.message ?? "Проверьте сеть, ключи API и что backend запущен."}
-      </p>
+      <p className="mt-2 text-sm leading-relaxed text-slate-400">{detail}</p>
       {ae?.request_id ? (
         <p className="mt-3 rounded-md bg-black/20 px-2 py-1.5 font-mono text-[11px] text-slate-500">
           request_id: {ae.request_id}

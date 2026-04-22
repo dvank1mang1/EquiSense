@@ -46,6 +46,7 @@ dependencies = [
     "pandas-datareader>=0.10.0",
     "nbformat>=5.10.4",
     "greenlet>=3.3.2",
+    "curl-cffi>=0.15.0",
 ]
 
 [dependency-groups]
@@ -55,6 +56,9 @@ dev = [
     "ruff>=0.11.0",
     "mypy>=1.15.0",
     "pre-commit>=4.2.0",
+]
+datasets = [
+    "kagglehub>=0.3.0",
 ]
 
 [tool.uv]

@@ -76,6 +76,120 @@ from app.ml.spa_lite import block_bootstrap_mean_pvalue  # noqa: E402
 sns.set_theme(style="whitegrid", context="talk")
 np.random.seed(42)
 
+
+def _normalize_plot_dates(s: pd.Series) -> pd.Series:
+    out = pd.to_datetime(s, errors="coerce")
+    try:
+        out = out.dt.tz_localize(None)
+    except (TypeError, AttributeError):
+        pass
+    return out.dt.normalize()
+
+
+def _holdout_equity_plot_frame(
+    backtest: pd.DataFrame,
+    backtest_meta: pd.DataFrame,
+) -> pd.DataFrame | None:
+    """
+    Dense business-day timeline with zero return on missing dates, then recompute cumulated equity.
+
+    Sparse ``groupby(date)`` rows leave large calendar gaps; Matplotlib draws straight chords across
+    those gaps (misleading ramps). Filling missing days with 0 return matches “no panel update”.
+    """
+    need = ("date", "ret_1d", "gross_ret", "net_ret")
+    if backtest is None or backtest.empty or not all(c in backtest.columns for c in need):
+        return None
+    bt = backtest[list(need)].copy()
+    bt["date"] = _normalize_plot_dates(bt["date"])
+    bt = bt.sort_values("date").drop_duplicates(subset=["date"], keep="last")
+    bt = bt.dropna(subset=["date"])
+    if bt.empty:
+        return None
+    d0, d1 = bt["date"].iloc[0], bt["date"].iloc[-1]
+    if not backtest_meta.empty and "net_ret" in backtest_meta.columns:
+        bm = backtest_meta[["date", "net_ret"]].copy()
+        bm["date"] = _normalize_plot_dates(bm["date"])
+        bm = bm.sort_values("date").drop_duplicates(subset=["date"], keep="last").dropna(subset=["date"])
+        if not bm.empty:
+            d0 = min(d0, bm["date"].iloc[0])
+            d1 = max(d1, bm["date"].iloc[-1])
+    br = pd.bdate_range(d0, d1, freq="B")
+    dense = pd.DataFrame({"date": br})
+    dense = dense.merge(bt, on="date", how="left")
+    for c in ("ret_1d", "gross_ret", "net_ret"):
+        dense[c] = pd.to_numeric(dense[c], errors="coerce").fillna(0.0)
+    dense["buy_hold_equally_weighted"] = (1.0 + dense["ret_1d"]).cumprod()
+    dense["strategy_curve_gross"] = (1.0 + dense["gross_ret"]).cumprod()
+    dense["strategy_curve_net"] = (1.0 + dense["net_ret"]).cumprod()
+    if not backtest_meta.empty and "net_ret" in backtest_meta.columns:
+        bm = backtest_meta[["date", "net_ret"]].copy()
+        bm["date"] = _normalize_plot_dates(bm["date"])
+        bm = bm.sort_values("date").drop_duplicates(subset=["date"], keep="last")
+        dense = dense.merge(bm.rename(columns={"net_ret": "meta_net_ret"}), on="date", how="left")
+        dense["meta_net_ret"] = pd.to_numeric(dense["meta_net_ret"], errors="coerce").fillna(0.0)
+        dense["strategy_meta_net"] = (1.0 + dense["meta_net_ret"]).cumprod()
+    else:
+        dense["strategy_meta_net"] = np.nan
+    return dense
+
+
+def _save_holdout_equity_figure(plot_df: pd.DataFrame, path: Path) -> None:
+    """Dark, high-contrast figure aligned with app-style Plotly charts."""
+    series: list[tuple[str, str]] = [
+        ("buy_hold_equally_weighted", "Buy & hold (EW universe)"),
+        ("strategy_curve_gross", "Strategy (gross)"),
+        ("strategy_curve_net", "Strategy (net, costs)"),
+        ("strategy_meta_net", "Meta-gated (net)"),
+    ]
+    colors = ("#56B4E9", "#E69F00", "#009E73", "#CC79A7")
+    fig, ax = plt.subplots(figsize=(12.5, 5.8), facecolor="#0f172a")
+    ax.set_facecolor("#1e293b")
+    for (col, label), color in zip(series, colors, strict=True):
+        if col not in plot_df.columns:
+            continue
+        if plot_df[col].notna().sum() == 0:
+            continue
+        ax.plot(
+            plot_df["date"],
+            plot_df[col],
+            color=color,
+            linewidth=2.15,
+            label=label,
+            solid_capstyle="round",
+        )
+    ax.axhline(1.0, color="#64748b", linewidth=1.0, linestyle=(0, (4, 4)), alpha=0.65, zorder=0)
+    ax.set_title("Backtest equity curves (holdout)", color="#f8fafc", fontsize=14, pad=14, fontweight="600")
+    ax.set_xlabel("Date", color="#94a3b8", fontsize=11)
+    ax.set_ylabel("Equity (start = 1.0)", color="#94a3b8", fontsize=11)
+    ax.tick_params(axis="x", colors="#94a3b8", labelsize=9)
+    ax.tick_params(axis="y", colors="#94a3b8", labelsize=9)
+    ax.grid(True, color="#334155", alpha=0.5, linewidth=0.55)
+    for spine in ax.spines.values():
+        spine.set_color("#475569")
+    leg = ax.legend(
+        loc="upper left",
+        frameon=True,
+        facecolor="#334155",
+        edgecolor="#64748b",
+        fontsize=9,
+        labelcolor="#e2e8f0",
+    )
+    if leg is not None:
+        for t in leg.get_texts():
+            t.set_color("#e2e8f0")
+    ax.margins(x=0.01)
+    fig.subplots_adjust(left=0.09, right=0.99, top=0.90, bottom=0.18)
+    fig.text(
+        0.09,
+        0.03,
+        "Equal-weight cross-section per day; net curves include turnover costs. "
+        "Missing calendar days filled with 0 return for display continuity.",
+        color="#64748b",
+        fontsize=8,
+    )
+    fig.savefig(path, dpi=180, facecolor=fig.get_facecolor(), edgecolor="none")
+    plt.close(fig)
+
 # Purged CV / ranking must match the supervised label horizon (see _load_combined_panel).
 _LABEL_HORIZON_DAYS = 5
 # Binary label target_up_5d uses cumulative forward return strictly above this (fraction).
@@ -1264,16 +1378,20 @@ def _plots(
     plt.savefig(OUT_DIR / "05_feature_importance.png", dpi=160)
     plt.close()
 
-    plt.figure(figsize=(12, 6))
-    sns.lineplot(data=backtest, x="date", y="buy_hold_equally_weighted", label="buy_hold_equal")
-    sns.lineplot(data=backtest, x="date", y="strategy_curve_gross", label="strategy_gross")
-    sns.lineplot(data=backtest, x="date", y="strategy_curve_net", label="strategy_net")
-    sns.lineplot(data=backtest_meta, x="date", y="strategy_curve_net", label="strategy_meta_net")
-    plt.title("Backtest Equity Curves (holdout)")
-    plt.ylabel("Equity (start=1.0)")
-    plt.tight_layout()
-    plt.savefig(OUT_DIR / "06_backtest_curves.png", dpi=160)
-    plt.close()
+    plot_bt = _holdout_equity_plot_frame(backtest, backtest_meta)
+    if plot_bt is not None:
+        _save_holdout_equity_figure(plot_bt, OUT_DIR / "06_backtest_curves.png")
+    else:
+        plt.figure(figsize=(12, 6))
+        sns.lineplot(data=backtest, x="date", y="buy_hold_equally_weighted", label="buy_hold_equal")
+        sns.lineplot(data=backtest, x="date", y="strategy_curve_gross", label="strategy_gross")
+        sns.lineplot(data=backtest, x="date", y="strategy_curve_net", label="strategy_net")
+        sns.lineplot(data=backtest_meta, x="date", y="strategy_curve_net", label="strategy_meta_net")
+        plt.title("Backtest Equity Curves (holdout)")
+        plt.ylabel("Equity (start=1.0)")
+        plt.tight_layout()
+        plt.savefig(OUT_DIR / "06_backtest_curves.png", dpi=160)
+        plt.close()
 
     if not cv_df.empty:
         plt.figure(figsize=(12, 6))

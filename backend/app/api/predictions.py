@@ -1,6 +1,5 @@
 import asyncio
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -16,6 +15,7 @@ from app.domain.exceptions import (
 )
 from app.domain.identifiers import ROLLOUT_MODEL_IDS, ModelId
 from app.jobs.batch_refresh import BatchRefreshOrchestrator
+from app.jobs.run_ids import new_run_id
 from app.schemas.prediction import (
     EnsureReadyResponse,
     GroupContributions,
@@ -155,10 +155,15 @@ async def compare_models(
     """Сравнение rollout-моделей (A–F) по сигналам и вероятности."""
     sym = ticker.strip().upper()
     logger.info("predictions.compare start ticker={}", sym)
-    comparison: dict[str, dict[str, Any]] = {}
-    for mid in ROLLOUT_MODEL_IDS:
+
+    async def compare_one(mid: ModelId) -> tuple[str, dict[str, Any]]:
         apath, _rid = await training.resolve_inference_artifact(mid)
-        offline = await training.offline_metrics_for_ticker_model(mid, sym)
+        offline_bundle = await training.offline_metrics_for_ticker_model(mid, sym)
+        offline = offline_bundle.metrics
+        offline_meta = {
+            "offline_metrics_source": offline_bundle.source,
+            "offline_metrics_trained_ticker": offline_bundle.trained_ticker,
+        }
         try:
             out = await service.predict(sym, mid, artifact_path=apath)
             sig: Signal | None = None
@@ -167,8 +172,9 @@ async def compare_models(
                     sig = Signal(out.signal)
                 except ValueError:
                     sig = None
-            comparison[mid.value] = {
+            return mid.value, {
                 **offline,
+                **offline_meta,
                 "ok": True,
                 "signal": sig.value if sig is not None else out.signal,
                 "probability": out.probability,
@@ -176,35 +182,40 @@ async def compare_models(
                 "error": None,
             }
         except (UnknownModelError, ModelArtifactMissingError, FeatureDataMissingError) as e:
-            comparison[mid.value] = {
-                **offline,
-                "ok": False,
-                "signal": None,
-                "probability": None,
-                "confidence": None,
-                "error": str(e),
-            }
             logger.warning(
                 "predictions.compare model_failed ticker={} model={} err={}",
                 sym,
                 mid.value,
                 e,
             )
-        except Exception as e:  # noqa: BLE001
-            comparison[mid.value] = {
+            return mid.value, {
                 **offline,
+                **offline_meta,
                 "ok": False,
                 "signal": None,
                 "probability": None,
                 "confidence": None,
-                "error": f"internal_error: {e}",
+                "error": str(e),
             }
+        except Exception as e:  # noqa: BLE001
             logger.exception(
                 "predictions.compare unexpected_error ticker={} model={} err={}",
                 sym,
                 mid.value,
                 e,
             )
+            return mid.value, {
+                **offline,
+                **offline_meta,
+                "ok": False,
+                "signal": None,
+                "probability": None,
+                "confidence": None,
+                "error": f"internal_error: {e}",
+            }
+
+    pairs = await asyncio.gather(*(compare_one(mid) for mid in ROLLOUT_MODEL_IDS))
+    comparison = dict(pairs)
     ok_count = sum(1 for row in comparison.values() if bool(row.get("ok", False)))
     logger.info(
         "predictions.compare done ticker={} ok_models={}/{}",
@@ -343,7 +354,7 @@ async def ensure_prediction_ready(
     before = await service.readiness(
         sym, selection.model_id, artifact_path=selection.artifact_path
     )
-    run_id = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_id = new_run_id()
     status_path, lineage_path = await orchestrator.run(
         tickers=[sym],
         run_id=run_id,

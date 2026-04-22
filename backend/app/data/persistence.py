@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,6 +16,15 @@ from app.core.config import settings
 def data_root(override: Path | None = None) -> Path:
     if override is not None:
         return override.resolve()
+    env = os.environ.get("EQUISENSE_DATA_ROOT", "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    # Monorepo: loaders write to `<repo>/data`, while uvicorn cwd is often `backend/`.
+    # `model_dir` default "data/models" would otherwise resolve to `backend/data/`.
+    backend_dir = Path(__file__).resolve().parents[2]
+    repo_data = backend_dir.parent / "data"
+    if repo_data.is_dir():
+        return repo_data.resolve()
     return Path(settings.model_dir).resolve().parent
 
 

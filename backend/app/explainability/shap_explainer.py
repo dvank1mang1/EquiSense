@@ -82,6 +82,9 @@ class ShapExplainer:
         self._explainer = None
         self._background: pd.DataFrame | None = None
         self._feature_set: list[str] = model.feature_set
+        # "tree" | "linear" | "predict_proba" — последний путь для Voting/Calibrated и т.п.
+        self._explainer_kind: str = "tree"
+        self._last_positive_expected: float | None = None
 
     def _features_for_shap(self, feat_df: pd.DataFrame) -> np.ndarray:
         """Match training pipeline: median imputer, then scaler for linear baselines."""
@@ -116,22 +119,48 @@ class ShapExplainer:
         sample_size = min(100, len(X_background))
         bg_df = X_background[self._feature_set].sample(sample_size, random_state=42)
         self._background = bg_df
+        self._last_positive_expected = None
 
         inner = _extract_inner_model(self._model.model)
         bg_arr = self._features_for_shap(bg_df)
 
         if _is_tree_model(inner):
+            self._explainer_kind = "tree"
             self._explainer = shap.TreeExplainer(inner, bg_arr)
         elif _is_linear_model(inner):
+            self._explainer_kind = "linear"
             self._explainer = shap.LinearExplainer(inner, bg_arr)
         else:
-            self._explainer = shap.Explainer(self._model.model, bg_df.values)
+            # CalibratedClassifierCV, VotingClassifier, и др.: shap.Explainer(model, data) падает
+            # с TypeError ("not callable"); masker + predict_proba стабильнее.
+            self._explainer_kind = "predict_proba"
+            masker = shap.maskers.Independent(bg_df)
+            self._explainer = shap.Explainer(self._model.model.predict_proba, masker)
 
     def explain_single(self, X_row: pd.DataFrame) -> dict[str, float]:
         if self._explainer is None:
             raise RuntimeError("Call _build_explainer before explain_single")
 
         feat_df = X_row[self._feature_set]
+
+        if self._explainer_kind == "predict_proba":
+            exp_out = self._explainer(feat_df.values)
+            arr3 = np.asarray(exp_out.values)
+            if arr3.ndim == 3:
+                arr = arr3[0, :, 1]
+            elif arr3.ndim == 2 and arr3.shape[1] == 2:
+                arr = arr3[:, 1]
+            else:
+                arr = arr3.reshape(-1)
+            bases = np.asarray(exp_out.base_values).reshape(-1)
+            if bases.size >= 2:
+                self._last_positive_expected = float(bases[1])
+            elif bases.size == 1:
+                self._last_positive_expected = float(bases[0])
+            else:
+                self._last_positive_expected = None
+            return dict(zip(self._feature_set, arr.tolist(), strict=False))
+
         feat_arr = self._features_for_shap(feat_df)
 
         shap_vals = self._explainer.shap_values(feat_arr)
@@ -150,6 +179,16 @@ class ShapExplainer:
             raise RuntimeError("Call _build_explainer before explain_batch")
 
         feat_df = X[self._feature_set]
+
+        if self._explainer_kind == "predict_proba":
+            exp_out = self._explainer(feat_df.values)
+            arr3 = np.asarray(exp_out.values)
+            if arr3.ndim == 3:
+                arr = arr3[:, :, 1]
+            else:
+                arr = arr3.reshape(len(feat_df), -1)
+            return pd.DataFrame(arr, columns=self._feature_set, index=X.index)
+
         feat_arr = self._features_for_shap(feat_df)
 
         shap_vals = self._explainer.shap_values(feat_arr)
@@ -179,6 +218,8 @@ class ShapExplainer:
     def base_value(self) -> float:
         if self._explainer is None:
             return 0.0
+        if self._explainer_kind == "predict_proba" and self._last_positive_expected is not None:
+            return float(self._last_positive_expected)
         ev = getattr(self._explainer, "expected_value", 0.0)
         if isinstance(ev, list | np.ndarray):
             arr = np.asarray(ev).flatten()

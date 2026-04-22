@@ -5,5 +5,5 @@ purged_kfold_mean_rank_ic,0.009393374358562185
 purged_kfold_std_rank_ic,0.02186189690226965
 purged_kfold_horizon_mean_rank_ic,0.006029566108905488
 purged_kfold_horizon_std_rank_ic,0.022983294935257404
-cpcv_mean_rank_ic,0.009534443284443283
-cpcv_std_rank_ic,0.023806815174899392
+cpcv_mean_rank_ic,0.005432994182994182
+cpcv_std_rank_ic,0.020168817576251344

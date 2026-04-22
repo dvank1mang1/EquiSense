@@ -6,9 +6,8 @@ import ActiveTickerBar from "@/components/ActiveTickerBar";
 import PageSection from "@/components/PageSection";
 import TickerSearch from "@/components/TickerSearch";
 import ModelComparison from "@/components/ModelComparison";
-import BacktestChart from "@/components/BacktestChart";
+import CompareMlBacktestPanel from "@/components/CompareMlBacktestPanel";
 import BacktestSuiteChart from "@/components/BacktestSuiteChart";
-import { MODEL_LABELS_LONG, ROLLOUT_MODEL_IDS } from "@/lib/models";
 import BrandLogo from "@/components/BrandLogo";
 import NewsMarquee from "@/components/NewsMarquee";
 
@@ -52,7 +51,7 @@ export default function ComparePage() {
                   </div>
                 </div>
                 <p className="text-sm md:text-base text-slate-400 max-w-xl leading-relaxed">
-                  Сравнение rollout-моделей (A–F): сигналы, метрики и backtesting на выбранном тикере.
+                  Сравнение rollout-моделей (A–F): метрики, один общий ML-бэктест с выбором моделей и suite базлайнов.
                 </p>
               </div>
               <div className="shrink-0 w-full lg:w-auto lg:max-w-md">
@@ -69,16 +68,13 @@ export default function ComparePage() {
                 <ModelComparison ticker={ticker} />
               </PageSection>
 
-              {ROLLOUT_MODEL_IDS.map((model) => (
-                <PageSection
-                  key={model}
-                  id={`compare-backtest-${model}-heading`}
-                  eyebrow="Backtesting"
-                  title={MODEL_LABELS_LONG[model] ?? model}
-                >
-                  <BacktestChart ticker={ticker} model={model} variant="ml" />
-                </PageSection>
-              ))}
+              <PageSection
+                id="compare-ml-backtest-heading"
+                eyebrow="Backtesting"
+                title="ML-модели: один прогон, выбор моделей"
+              >
+                <CompareMlBacktestPanel ticker={ticker} />
+              </PageSection>
 
               <PageSection
                 id="compare-suite-heading"
@@ -114,7 +110,8 @@ export default function ComparePage() {
                     Выберите тикер для сравнения
                   </h2>
                   <p className="text-sm text-slate-400 leading-relaxed">
-                    После выбора отобразятся метрики по всем rollout-моделям и отдельные графики backtesting для каждой.
+                    После выбора откроются метрики по всем rollout-моделям, общий ML-бэктест с чекбоксами и блок suite
+                    базлайнов.
                   </p>
                 </div>
                 <p className="pt-1">

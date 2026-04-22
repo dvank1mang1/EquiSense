@@ -140,15 +140,20 @@ class PredictionService:
 
         normalized = ticker.strip().upper()
         model_cls = get_model_class(model_id)
-        instance = model_cls()
+
+        def _load_model() -> object:
+            inst = model_cls()
+            inst.load(artifact_path)
+            return inst
+
         try:
-            instance.load(artifact_path)
+            instance = await asyncio.to_thread(_load_model)
         except FileNotFoundError as e:
             raise ModelArtifactMissingError(
                 f"No trained artifact for {model_id.value}. "
                 f"POST /api/v1/models/{model_id.value}/train with JSON {{\"ticker\":\"AAPL\"}}, "
                 "poll GET …/train/{{run_id}} until status completed, then call predict again "
-                f"(or copy weights to {instance.model_path})."
+                f"(or copy weights to {model_cls().model_path})."
             ) from e
 
         def _load_last_row() -> pd.DataFrame:

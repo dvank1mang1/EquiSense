@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import psycopg2
@@ -333,16 +335,69 @@ class PostgresJobQueue:
 
 
 class InMemoryJobQueue:
+    """
+    In-process job rows for local dev when Postgres job_queue is off.
+
+    Without this, POST /backtesting/.../run returned a job_id but GET /jobs/{id} always 404
+    because nothing stored the row and :meth:`get_job` did not exist.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._jobs: dict[str, dict[str, Any]] = {}
+
     def enqueue(self, run_id: str, payload: dict[str, Any]) -> None:
-        _ = run_id, payload
+        now = datetime.now(tz=UTC).isoformat()
+        max_attempts = int(payload.get("max_attempts", settings.job_queue_max_attempts))
+        with self._lock:
+            self._jobs[run_id] = {
+                "run_id": run_id,
+                "status": "queued",
+                "payload": dict(payload),
+                "error": None,
+                "created_at": now,
+                "updated_at": now,
+                "max_attempts": max(1, max_attempts),
+                "attempt_count": 0,
+            }
 
     def status(self, run_id: str) -> str | None:
-        _ = run_id
-        return None
+        with self._lock:
+            j = self._jobs.get(run_id)
+            return str(j["status"]) if j else None
+
+    def get_job(self, run_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            j = self._jobs.get(run_id)
+            if j is None:
+                return None
+            return {
+                "run_id": str(j["run_id"]),
+                "status": str(j["status"]),
+                "payload": j.get("payload"),
+                "error": j.get("error"),
+                "created_at": j.get("created_at"),
+                "updated_at": j.get("updated_at"),
+            }
+
+    def mark_completed(self, run_id: str) -> None:
+        self._set_status(run_id, "completed", None)
+
+    def mark_failed(self, run_id: str, error: str) -> None:
+        self._set_status(run_id, "failed", error)
+
+    def _set_status(self, run_id: str, status: str, error: str | None) -> None:
+        now = datetime.now(tz=UTC).isoformat()
+        with self._lock:
+            if run_id not in self._jobs:
+                return
+            self._jobs[run_id]["status"] = status
+            self._jobs[run_id]["error"] = error
+            self._jobs[run_id]["updated_at"] = now
 
     def snapshot(self, *, stale_after_sec: int) -> dict[str, int]:
         _ = stale_after_sec
-        return {
+        counts = {
             "queued": 0,
             "running": 0,
             "completed": 0,
@@ -350,6 +405,12 @@ class InMemoryJobQueue:
             "stale_running": 0,
             "dead_letter": 0,
         }
+        with self._lock:
+            for j in self._jobs.values():
+                st = str(j.get("status", ""))
+                if st in counts:
+                    counts[st] += 1
+        return counts
 
     def list_dead_letter(self, *, limit: int = 100) -> list[dict[str, Any]]:
         _ = limit
@@ -389,12 +450,9 @@ def safe_queue_snapshot(*, stale_after_sec: int) -> dict[str, int] | None:
 
 
 def safe_get_job(run_id: str) -> dict[str, Any] | None:
-    """Safe wrapper around PostgresJobQueue.get_job for API usage."""
+    """Safe wrapper around job queue get_job for API usage."""
     try:
-        queue = get_job_queue()
-        if hasattr(queue, "get_job"):
-            return queue.get_job(run_id)  # type: ignore[no-any-return]
-        return None
+        return get_job_queue().get_job(run_id)  # type: ignore[union-attr]
     except Exception as e:  # noqa: BLE001
         logger.warning("Job queue get_job failed: {}", e)
         return None

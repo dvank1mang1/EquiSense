@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from app.features.feature_store import FeatureStore
+from app.jobs.run_ids import new_run_id
 from app.ml.evaluation import financial_selection_metrics, information_coefficient_metrics
 from app.research_models.dataset import build_research_panel, split_panel_by_date
 from app.research_models.diagnostics import run_diagnostics
@@ -115,7 +115,7 @@ def run_research_experiment(cfg: ResearchConfig) -> ResearchRunResult:
         hold_days=cfg.hold_days,
     )
 
-    stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+    stamp = new_run_id()
     root = Path(cfg.output_dir).resolve() / f"{cfg.model_type}_{cfg.strategy_type}_{stamp}"
     root.mkdir(parents=True, exist_ok=True)
     strat.daily.to_csv(root / "strategy_daily.csv", index=False)

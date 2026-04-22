@@ -1,5 +1,6 @@
 import time
 import uuid
+import asyncio
 from contextlib import asynccontextmanager
 
 import httpx
@@ -12,6 +13,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.api import router as api_router
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.data.yfinance_session import ensure_yfinance_session
 
 OPENAPI_TAGS = [
     {
@@ -49,6 +51,7 @@ async def lifespan(app: FastAPI):
     limits = httpx.Limits(max_connections=32, max_keepalive_connections=16)
     async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as client:
         app.state.http_client = client
+        await asyncio.to_thread(ensure_yfinance_session)
         yield
     logger.info("Shutting down")
 
@@ -71,9 +74,15 @@ if settings.metrics_enabled:
         include_in_schema=False,
     )
 
+_cors_regex = (settings.cors_allow_origin_regex or "").strip() or None
+if _cors_regex is None and settings.debug:
+    # Браузер с https://*.ngrok-free.app шлёт API на http://localhost:8000 → нужен Origin в CORS.
+    _cors_regex = r"https://.*\.(ngrok-free\.app|ngrok\.io|ngrok\.app)$"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
+    allow_origin_regex=_cors_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

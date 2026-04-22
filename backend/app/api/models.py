@@ -92,8 +92,14 @@ async def get_model_metrics(
         raise HTTPException(status_code=422, detail=f"Unknown model id: {model_id!r}") from e
     if ticker and ticker.strip():
         sym = ticker.strip().upper()
-        metrics = await service.offline_metrics_for_ticker_model(mid, sym)
-        return {"model_id": model_id, "ticker": sym, "source": "training_or_sidecar", "metrics": metrics}
+        bundle = await service.offline_metrics_for_ticker_model(mid, sym)
+        return {
+            "model_id": model_id,
+            "ticker": sym,
+            "offline_metrics_source": bundle.source,
+            "offline_metrics_trained_ticker": bundle.trained_ticker,
+            "metrics": bundle.metrics,
+        }
 
     sidecar = Path(get_settings().model_dir).resolve() / f"{mid.value}.metrics.json"
     if sidecar.is_file():

@@ -11,7 +11,8 @@
 3) **plotly-demo** — один тикер AAPL с raw.githubusercontent.com/plotly/datasets (для смоук-теста).
 4) **public-sample** — готовый long-format CSV (Vega Datasets / jsDelivr): AAPL, MSFT, AMZN, GOOG, IBM без ключей; цена → O=H=L=C, объём-заглушка (демо/UI).
 5) **yfinance** — OHLCV + базовый фундаментал через `yfinance` (без Alpha Vantage; удобно для Docker: тот же `./data`, что в compose).
-6) В режиме **`yfinance --source auto`** (по умолчанию): сначала Yahoo, затем Stooq, затем **Alpha Vantage**, если задан **`ALPHA_VANTAGE_API_KEY`** (актуально для Docker, когда Yahoo отдаёт HTML).
+6) **`kagglehub-file`** — скачивание **отдельных CSV/txt по тикеру** с Kaggle через пакет `kagglehub` (без вызова yfinance в коде). Публичный пример: `jacksoncrow/stock-market-dataset` + шаблон `stocks/{ticker}.csv` (дневные бары примерно до 2020-04). См. `DATA_SOURCES.md`. Флаг **`--merge-existing`**: объединить с уже лежащим `raw/ohlcv/{TICKER}.parquet`, чтобы закрыть дыры по датам.
+7) В режиме **`yfinance --source auto`** (по умолчанию): сначала Yahoo, затем Stooq, затем **Alpha Vantage**, если задан **`ALPHA_VANTAGE_API_KEY`** (актуально для Docker, когда Yahoo отдаёт HTML).
 
 Примеры:
 
@@ -41,6 +42,12 @@
   export ALPHA_VANTAGE_API_KEY=...
   uv run python scripts/download_ohlcv_dataset.py yfinance --source alpha_vantage --tickers AAPL MSFT --run-etl
 
+  # Kaggle (файл на тикер), без yfinance — нужен пакет kagglehub:
+  uv sync --group datasets
+  uv run --group datasets python scripts/download_ohlcv_dataset.py kagglehub-file \
+    --handle jacksoncrow/stock-market-dataset --path-template stocks/{ticker}.csv \
+    --tickers AAPL MSFT --merge-existing --run-etl
+
 Требуемые колонки в Parquet: date, open, high, low, close, volume (см. app.data.validation).
 """
 
@@ -68,16 +75,20 @@ load_dotenv(_BACKEND_ROOT / ".env")
 load_dotenv(_BACKEND_ROOT.parent / ".env")
 
 from app.core.config import settings  # noqa: E402
+from app.data.kagglehub_remote_path import format_kagglehub_remote_path  # noqa: E402
 from app.data.market_data import (  # noqa: E402
     ALPHA_BASE,
     _check_alpha_payload,
     _daily_series_to_df,
 )
+from app.data.ohlcv_merge import merge_ohlcv_history  # noqa: E402
 from app.data.persistence import (  # noqa: E402
     fundamentals_json_path,
     ohlcv_parquet_path,
+    read_ohlcv_parquet_sync,
     write_news_json_sync,
 )
+from app.data.periods import sanitize_ohlcv_dataframe  # noqa: E402
 from app.data.utils import normalize_ticker  # noqa: E402
 from app.data.validation import validate_ohlcv_frame  # noqa: E402
 from app.domain.exceptions import UpstreamRateLimitError  # noqa: E402
@@ -310,6 +321,10 @@ def fetch_yfinance_daily(
     exchange-local terms; ``ignore_tz=True`` strips any timezone to match the rest of the pipeline.
     """
     import yfinance as yf
+
+    from app.data.yfinance_session import ensure_yfinance_session
+
+    ensure_yfinance_session()
 
     sym = ticker.strip().upper()
     last: str = ""
@@ -574,6 +589,29 @@ def import_kaggle_long_csv(
     return normalize_ohlcv_frame(raw, ticker=sym)
 
 
+def fetch_kagglehub_local_file(
+    handle: str,
+    remote_path: str,
+    *,
+    force_download: bool,
+) -> Path:
+    """Скачивает один файл из датасета Kaggle в кэш kagglehub и возвращает путь."""
+    try:
+        import kagglehub
+    except ImportError as e:
+        raise RuntimeError(
+            "Нужен пакет kagglehub: `uv sync --group datasets`, затем запуск "
+            "`uv run --group datasets python scripts/download_ohlcv_dataset.py kagglehub-file …`"
+        ) from e
+    rel = remote_path.replace("\\", "/").lstrip("/")
+    out = kagglehub.dataset_download(
+        handle.strip(),
+        path=rel,
+        force_download=force_download,
+    )
+    return Path(out)
+
+
 def resolve_kaggle_boris_ticker_path(unzip_root: Path, ticker: str) -> Path:
     """
     Архив borismarjanovic/price-volume-data-for-all-us-stocks-etfs:
@@ -774,6 +812,34 @@ def main() -> None:
     sp_kb.add_argument("--tickers", nargs="+", required=True)
     sp_kb.add_argument("--run-etl", action="store_true")
 
+    sp_kh = sub.add_parser(
+        "kagglehub-file",
+        help="Один файл OHLCV на тикер с Kaggle (kagglehub), без yfinance; см. --handle / --path-template",
+    )
+    sp_kh.add_argument(
+        "--handle",
+        default="jacksoncrow/stock-market-dataset",
+        help="Идентификатор датасета owner/slug (публичный пример: jacksoncrow/stock-market-dataset)",
+    )
+    sp_kh.add_argument(
+        "--path-template",
+        default="stocks/{ticker}.csv",
+        help="Относительный путь внутри датасета: {ticker}/{TICKER} uppercase, {ticker_lower} для boris",
+    )
+    sp_kh.add_argument("--tickers", nargs="+", required=True)
+    sp_kh.add_argument(
+        "--merge-existing",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Объединить с существующим raw/ohlcv/{TICKER}.parquet (dedupe по дате, keep last)",
+    )
+    sp_kh.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Перекачать файл даже если есть в кэше kagglehub",
+    )
+    sp_kh.add_argument("--run-etl", action="store_true")
+
     sp_yf = sub.add_parser(
         "yfinance",
         help="OHLCV + фундаментал через yfinance (без Alpha Vantage)",
@@ -915,6 +981,55 @@ def main() -> None:
                 write_minimal_fundamentals(sym, root=data_root)
                 write_empty_news(sym, root=data_root)
                 print(" wrote", path, "rows", len(df), "from", txt_path)
+                ok.append(sym)
+            except Exception as e:  # noqa: BLE001
+                print(f" FAIL {sym}: {e}", file=sys.stderr)
+        if args.run_etl and ok:
+            run_etl_for(ok, data_root=data_root)
+        return
+
+    if args.cmd == "kagglehub-file":
+        ok: list[str] = []
+        for t in args.tickers:
+            sym = t.strip().upper()
+            try:
+                remote = format_kagglehub_remote_path(sym, args.path_template)
+                local = fetch_kagglehub_local_file(
+                    args.handle,
+                    remote,
+                    force_download=bool(args.force_download),
+                )
+                new_df = import_csv(local, ticker=sym, symbol_col=None)
+                new_df = sanitize_ohlcv_dataframe(new_df)
+                if new_df.empty:
+                    raise ValueError(f"пустой OHLCV после sanitize для {sym} из {local}")
+                if args.merge_existing:
+                    existing = read_ohlcv_parquet_sync(sym, root=data_root)
+                    if existing is not None and not existing.empty:
+                        existing = sanitize_ohlcv_dataframe(existing)
+                        df = sanitize_ohlcv_dataframe(merge_ohlcv_history(existing, new_df))
+                    else:
+                        df = new_df
+                else:
+                    df = new_df
+                path = write_ohlcv_parquet_sync(sym, df, root=data_root)
+                write_minimal_fundamentals(sym, root=data_root)
+                write_empty_news(sym, root=data_root)
+                d0 = df["date"].iloc[0]
+                d1 = df["date"].iloc[-1]
+                print(
+                    " wrote",
+                    path,
+                    "rows",
+                    len(df),
+                    "range",
+                    str(d0)[:10],
+                    "…",
+                    str(d1)[:10],
+                    "from kagglehub",
+                    args.handle,
+                    remote,
+                )
                 ok.append(sym)
             except Exception as e:  # noqa: BLE001
                 print(f" FAIL {sym}: {e}", file=sys.stderr)

@@ -100,3 +100,5 @@ def test_get_history_prefers_cached_ohlcv_before_upstream_call(
         assert body["period"] == "1m"
         assert isinstance(body["candles"], list)
         assert len(body["candles"]) > 0
+        assert body.get("meta", {}).get("rows") == len(body["candles"])
+        assert isinstance(body.get("meta", {}).get("warnings"), list)

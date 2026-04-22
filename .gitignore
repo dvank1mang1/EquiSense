@@ -33,6 +33,7 @@ data/raw/
 data/processed/
 data/models/
 data/jobs/
+data/tmp_kaggle/
 backend/data/raw/
 backend/data/processed/
 backend/data/models/

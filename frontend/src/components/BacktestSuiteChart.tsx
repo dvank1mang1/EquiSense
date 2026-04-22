@@ -240,10 +240,23 @@ export default function BacktestSuiteChart({ ticker }: { ticker: string }) {
               layout={{
                 height: 380,
                 paper_bgcolor: "transparent",
-                plot_bgcolor: "transparent",
+                plot_bgcolor: "rgba(15,23,42,0.25)",
                 font: { color: "#94a3b8", size: 12 },
-                xaxis: { gridcolor: "#334155", title: "Дата" },
-                yaxis: { gridcolor: "#334155", tickprefix: "$", title: "Equity" },
+                xaxis: {
+                  gridcolor: "rgba(51,65,85,0.35)",
+                  title: { text: "Дата" },
+                  zeroline: false,
+                  showline: true,
+                  linecolor: "rgba(71,85,105,0.5)",
+                },
+                yaxis: {
+                  gridcolor: "rgba(51,65,85,0.35)",
+                  tickprefix: "$",
+                  title: { text: "Equity" },
+                  zeroline: false,
+                  showline: true,
+                  linecolor: "rgba(71,85,105,0.5)",
+                },
                 margin: { t: 24, b: 48, l: 72, r: 24 },
                 legend: {
                   orientation: "h",
@@ -252,8 +265,14 @@ export default function BacktestSuiteChart({ ticker }: { ticker: string }) {
                   xanchor: "right",
                   x: 1,
                   bgcolor: "transparent",
+                  font: { size: 11 },
                 },
                 hovermode: "x unified",
+                hoverlabel: {
+                  bgcolor: "rgba(30,41,59,0.92)",
+                  bordercolor: "rgba(100,116,139,0.45)",
+                  font: { color: "#e2e8f0", size: 12 },
+                },
               }}
               config={{ displayModeBar: true, responsive: true }}
               style={{ width: "100%" }}

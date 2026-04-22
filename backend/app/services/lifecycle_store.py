@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from loguru import logger
+
+from app.services.db_unreachable import is_benign_database_unreachable
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -215,7 +217,10 @@ class ResilientLifecycleStore:
         try:
             return await self._primary.state(model_id)
         except Exception as e:  # noqa: BLE001
-            logger.warning("Lifecycle state failed in primary store: {}", e)
+            if is_benign_database_unreachable(e):
+                logger.debug("Lifecycle state skipped primary store (DB unreachable): {}", e)
+            else:
+                logger.warning("Lifecycle state failed in primary store: {}", e)
             return await self._fallback.state(model_id)
 
     async def promote(self, model_id: str, run_id: str, *, reason: str) -> ModelLifecycleState:
@@ -223,12 +228,18 @@ class ResilientLifecycleStore:
         try:
             return await self._primary.promote(model_id, run_id, reason=reason)
         except Exception as e:  # noqa: BLE001
-            logger.warning("Lifecycle promote failed in primary store: {}", e)
+            if is_benign_database_unreachable(e):
+                logger.debug("Lifecycle promote skipped primary store (DB unreachable): {}", e)
+            else:
+                logger.warning("Lifecycle promote failed in primary store: {}", e)
             return state
 
     async def list_states(self) -> list[ModelLifecycleState]:
         try:
             return await self._primary.list_states()
         except Exception as e:  # noqa: BLE001
-            logger.warning("Lifecycle list failed in primary store: {}", e)
+            if is_benign_database_unreachable(e):
+                logger.debug("Lifecycle list skipped primary store (DB unreachable): {}", e)
+            else:
+                logger.warning("Lifecycle list failed in primary store: {}", e)
             return await self._fallback.list_states()

@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 import numpy as np
@@ -51,6 +52,23 @@ class PromotionDecision:
     candidate_run_id: str
     champion_before_run_id: str | None = None
     checks: dict[str, Any] | None = None
+
+
+OfflineMetricsSource = Literal[
+    "same_ticker_holdout",
+    "none",
+    "other_ticker_champion",
+    "other_ticker_flat_file",
+]
+
+
+@dataclass(frozen=True)
+class OfflineMetricsResult:
+    """Holdout metrics for UI; ``trained_ticker`` is the symbol the numbers actually describe."""
+
+    metrics: dict[str, float | None]
+    source: OfflineMetricsSource
+    trained_ticker: str | None = None
 
 
 class TrainingRegistry:
@@ -343,7 +361,9 @@ class TrainingService:
                 )
                 artifact_path = str(_artifact_path_for_run(model_id.value, run.run_id))
                 await asyncio.to_thread(instance.save, artifact_path)
+                # metrics dict built below; disk copy uses the same numbers as experiment store
                 metrics = {
+                    "ticker": sym,
                     "accuracy": float(metrics.get("accuracy", float("nan"))),
                     "f1": float(metrics["f1"]),
                     "roc_auc": float(metrics["roc_auc"]),
@@ -411,6 +431,10 @@ class TrainingService:
                 done = self._registry.get(run.run_id)
                 if done is not None:
                     await self._experiment_store.upsert(done)
+                try:
+                    await asyncio.to_thread(_persist_metrics_alongside_artifact, artifact_path, sym, metrics)
+                except Exception as werr:  # noqa: BLE001
+                    logger.warning("Could not write metrics.json beside {}: {}", artifact_path, werr)
 
         task = asyncio.create_task(_job())
         self._registry.register_task(run.run_id, task)
@@ -441,11 +465,13 @@ class TrainingService:
 
     async def offline_metrics_for_ticker_model(
         self, model_id: ModelId, ticker: str
-    ) -> dict[str, float | None]:
+    ) -> OfflineMetricsResult:
         """
-        Holdout metrics from the latest completed training run on this ticker (or flat sidecar).
+        Holdout metrics for UI.
 
-        Does not mix in champion metrics from another ticker.
+        Prefer the latest completed training **on the requested ticker**. If none, fall back to
+        the promoted champion run or ``{model_id}.metrics.json`` so flat joblib demos still show
+        numbers (clearly labeled as another ticker in ``trained_ticker`` / ``source``).
         """
         sym = ticker.strip().upper()
         metric_keys = (
@@ -467,7 +493,7 @@ class TrainingService:
             "test_prevalence_positive",
             "long_short_spread",
         )
-        out: dict[str, float | None] = {k: None for k in metric_keys}
+        empty: dict[str, float | None] = {k: None for k in metric_keys}
         seen: set[str] = set()
         ordered: list[TrainingRun] = []
 
@@ -476,14 +502,6 @@ class TrainingService:
                 return
             seen.add(run.run_id)
             ordered.append(run)
-
-        def fill_from(m: dict[str, Any]) -> dict[str, float | None] | None:
-            if _metric(m, "f1") is None and _metric(m, "roc_auc") is None:
-                return None
-            filled = {k: None for k in metric_keys}
-            for k in metric_keys:
-                filled[k] = _metric(m, k)
-            return filled
 
         _, run_id = await self.resolve_inference_artifact(model_id)
         if run_id:
@@ -496,21 +514,77 @@ class TrainingService:
         for run in ordered:
             if run.status != "completed" or not run.metrics:
                 continue
-            got = fill_from(run.metrics)
+            got = _fill_metric_columns(run.metrics, metric_keys)
             if got is not None:
-                return got
+                return OfflineMetricsResult(got, "same_ticker_holdout", sym)
 
-        sidecar = Path(get_settings().model_dir).resolve() / f"{model_id.value}.metrics.json"
+        model_dir = Path(get_settings().model_dir).resolve()
+        sidecar = model_dir / f"{model_id.value}.metrics.json"
         if sidecar.is_file():
             try:
                 raw = json.loads(sidecar.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError, TypeError):
                 raw = {}
             if isinstance(raw, dict) and str(raw.get("ticker", "")).strip().upper() == sym:
-                got = fill_from(raw)
+                got = _fill_metric_columns(raw, metric_keys)
                 if got is not None:
-                    return got
-        return out
+                    return OfflineMetricsResult(got, "same_ticker_holdout", sym)
+
+        nested = _load_nested_run_metrics_json(model_dir, model_id.value, sym)
+        if nested is not None:
+            got = _fill_metric_columns(nested, metric_keys)
+            if got is not None:
+                return OfflineMetricsResult(got, "same_ticker_holdout", sym)
+
+        apath, _ = await self.resolve_inference_artifact(model_id)
+        if apath:
+            beside = Path(apath).parent / "metrics.json"
+            if beside.is_file():
+                try:
+                    raw2 = json.loads(beside.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError, TypeError):
+                    raw2 = {}
+                if isinstance(raw2, dict) and str(raw2.get("ticker", "")).strip().upper() == sym:
+                    got = _fill_metric_columns(raw2, metric_keys)
+                    if got is not None:
+                        return OfflineMetricsResult(got, "same_ticker_holdout", sym)
+
+        # --- Fallbacks: last known training for this model slot (may be a different ticker) ---
+        state = await self.get_lifecycle(model_id.value)
+        if state.champion_run_id:
+            champ = await self.get_status(state.champion_run_id)
+            if (
+                champ is not None
+                and champ.model_id == model_id.value
+                and champ.status == "completed"
+                and champ.metrics
+            ):
+                got = _fill_metric_columns(champ.metrics, metric_keys)
+                if got is not None:
+                    ct = champ.ticker.strip().upper()
+                    src: OfflineMetricsSource = (
+                        "same_ticker_holdout" if ct == sym else "other_ticker_champion"
+                    )
+                    return OfflineMetricsResult(got, src, ct if src == "other_ticker_champion" else sym)
+
+        if sidecar.is_file():
+            try:
+                raw3 = json.loads(sidecar.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError, TypeError):
+                raw3 = {}
+            if isinstance(raw3, dict):
+                got = _fill_metric_columns(raw3, metric_keys)
+                if got is not None:
+                    ft = str(raw3.get("ticker", "") or "").strip().upper() or None
+                    if ft == sym:
+                        return OfflineMetricsResult(got, "same_ticker_holdout", sym)
+                    return OfflineMetricsResult(
+                        got,
+                        "other_ticker_flat_file",
+                        ft,
+                    )
+
+        return OfflineMetricsResult(dict(empty), "none", None)
 
     async def promote_champion(
         self, model_id: str, run_id: str, *, reason: str, force: bool = False
@@ -663,6 +737,50 @@ class TrainingService:
         await self._experiment_store.upsert(run)
 
 
+def _json_normalize_for_disk(obj: Any) -> Any:
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    if isinstance(obj, dict):
+        return {str(k): _json_normalize_for_disk(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_normalize_for_disk(v) for v in obj]
+    return obj
+
+
+def _persist_metrics_alongside_artifact(artifact_path: str, sym: str, metrics: dict[str, Any]) -> None:
+    """So /compare can load holdout metrics when Postgres is down (flat joblib or after restart)."""
+    path = Path(artifact_path).parent / "metrics.json"
+    payload = _json_normalize_for_disk(dict(metrics))
+    if not isinstance(payload, dict):
+        return
+    payload["ticker"] = sym
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_nested_run_metrics_json(
+    model_dir: Path, model_id_str: str, sym: str
+) -> dict[str, Any] | None:
+    """``{model_dir}/{model_id}/{run_id}/metrics.json`` written after training."""
+    root = model_dir / model_id_str
+    if not root.is_dir():
+        return None
+    candidates: list[tuple[float, Path]] = []
+    for p in root.glob("*/metrics.json"):
+        try:
+            candidates.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    for _, p in sorted(candidates, key=lambda t: t[0], reverse=True):
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, TypeError):
+            continue
+        if isinstance(raw, dict) and str(raw.get("ticker", "")).strip().upper() == sym:
+            return raw
+    return None
+
+
 def _metric(metrics: dict[str, Any], name: str) -> float | None:
     raw = metrics.get(name)
     if raw is None:
@@ -676,6 +794,25 @@ def _metric(metrics: dict[str, Any], name: str) -> float | None:
     if abs(v) == float("inf"):
         return None
     return v
+
+
+def _metrics_blob_usable(m: dict[str, Any]) -> bool:
+    """True if dict looks like a classification holdout blob (not only IC/spread keys)."""
+    if _metric(m, "f1") is not None or _metric(m, "roc_auc") is not None:
+        return True
+    if _metric(m, "pr_auc") is not None:
+        return True
+    if _metric(m, "accuracy") is not None:
+        return True
+    return False
+
+
+def _fill_metric_columns(
+    m: dict[str, Any], metric_keys: tuple[str, ...]
+) -> dict[str, float | None] | None:
+    if not _metrics_blob_usable(m):
+        return None
+    return {k: _metric(m, k) for k in metric_keys}
 
 
 def _prepare_training_frames(
