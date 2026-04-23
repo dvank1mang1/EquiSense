@@ -81,6 +81,20 @@ class _FakeMarketShouldNotBeCalled:
         raise AssertionError("Network fallback must not be called in this test")
 
 
+async def _cached_ohlcv_parquet_for_tests(ticker: str) -> pd.DataFrame:
+    _ = ticker
+    return pd.DataFrame(
+        {
+            "date": pd.date_range("2024-01-01", periods=8, freq="D"),
+            "close": [100, 101, 102, 101, 103, 104, 103, 105],
+            "open": [100, 100, 101, 102, 101, 103, 104, 103],
+            "high": [101, 102, 103, 103, 104, 105, 104, 106],
+            "low": [99, 100, 101, 100, 102, 103, 102, 104],
+            "volume": [1_000_000] * 8,
+        }
+    )
+
+
 @pytest.mark.integration
 def test_run_backtest_http_200(monkeypatch: pytest.MonkeyPatch) -> None:
     from main import app
@@ -124,6 +138,10 @@ def test_run_backtest_http_200(monkeypatch: pytest.MonkeyPatch) -> None:
             return "Buy" if p >= 0.55 else "Hold"
 
     monkeypatch.setattr("app.services.backtesting_service.get_model_class", lambda model_id: _Model)
+    monkeypatch.setattr(
+        "app.services.backtesting_service.read_ohlcv_parquet",
+        _cached_ohlcv_parquet_for_tests,
+    )
     app.dependency_overrides[get_backtesting_service] = lambda: BacktestingService(
         market=_FakeMarket(),
         features=_FakeStore(),
@@ -184,6 +202,10 @@ def test_compare_backtest_models_http_returns_ok_flags(monkeypatch: pytest.Monke
             return "Buy" if p >= 0.55 else "Hold"
 
     monkeypatch.setattr("app.services.backtesting_service.get_model_class", lambda model_id: _Model)
+    monkeypatch.setattr(
+        "app.services.backtesting_service.read_ohlcv_parquet",
+        _cached_ohlcv_parquet_for_tests,
+    )
     app.dependency_overrides[get_backtesting_service] = lambda: BacktestingService(
         market=_FakeMarket(),
         features=_FakeStore(),
