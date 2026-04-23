@@ -1,5 +1,7 @@
 # EquiSense
 
+Публичное демо: **https://grimy-paradox-salute.ngrok-free.dev** (ngrok, URL может смениться).
+
 ML-платформа для анализа и прогнозирования движения акций. Объединяет технический анализ, фундаментальные данные и NLP-анализ новостей (FinBERT) для генерации торговых сигналов с объяснением через SHAP и backtesting.
 
 ## Стек
@@ -150,39 +152,21 @@ npm run dev
 
 - Pre-commit hooks: `pre-commit install` (from repo root)
 - Backend CI: `.github/workflows/backend-ci.yml` (ruff + mypy + pytest)
-- Architecture decisions and migration triggers: `ARCHITECTURE_DECISIONS.md`
-- SLO/SLI baseline and error budget: `SLO.md`
 
-## Production-lite roadmap (without Kubernetes)
+## Операционный план (docker-compose)
 
-Current runtime is intentionally simple: `docker-compose` + `postgres` + FastAPI backend.
-This is enough for early and mid-stage development if reliability controls are explicit.
+Сейчас: `docker-compose` + Postgres + FastAPI и отдельный worker для джоб.
 
-Recommended sequence:
+1. Стабильный compose, бэкапы Postgres, health/readiness и нормальные логи.
+2. Очередь: Postgres + `scripts/job_worker.py`; отдельный Redis — только если упираетесь в конкуренцию задач.
 
-1. **Stabilize current compose runtime**
-   - Separate `api` and background worker process (jobs/training). ✅
-   - Keep Postgres for control-plane metadata (jobs/experiments/model registry).
-   - Add regular backup policy for Postgres volume.
+Переменные окружения (см. `.env.example`):
 
-2. **Add operational guardrails**
-   - Health/readiness probes (`/health` + dependency checks).
-   - Structured logs with request and run identifiers.
-   - Alerting from `SLO.md` thresholds (freshness, latency, failure rate).
-
-3. **Introduce queue only when needed**
-   - Current baseline: Postgres-backed queue + dedicated worker (`scripts/job_worker.py`).
-   - Add Redis + task queue if job concurrency becomes a bottleneck.
-   - Move long-running training/backtesting to workers.
-   - Keep API latency predictable under load.
-
-Operational switches:
-
-- `EXPERIMENT_STORE_BACKEND=postgres` enables persistent experiment registry.
-- `JOB_STORE_BACKEND=postgres` enables Postgres-backed job status/lineage/metrics.
-- `JOB_QUEUE_BACKEND=postgres` enables API-to-worker background queue.
-- `LIFECYCLE_STORE_BACKEND=postgres` persists champion promotions across API restarts.
-- `FINBERT_DEVICE=auto|cpu|cuda`, `FINBERT_BATCH_SIZE`, `FINBERT_MODEL_NAME` — настройки sentiment ETL (см. `.env.example`).
+- `EXPERIMENT_STORE_BACKEND=postgres` — реестр экспериментов.
+- `JOB_STORE_BACKEND=postgres` — статусы джоб.
+- `JOB_QUEUE_BACKEND=postgres` — очередь API → worker.
+- `LIFECYCLE_STORE_BACKEND=postgres` — champion-модели после рестартов.
+- `FINBERT_DEVICE=auto|cpu|cuda`, `FINBERT_BATCH_SIZE`, `FINBERT_MODEL_NAME` — sentiment ETL.
 
 ### Новости и sentiment (FinBERT)
 
@@ -235,11 +219,6 @@ Configure in GitHub repository settings:
 
 You can also trigger it manually via Actions `workflow_dispatch` with custom ticker list.
 
-4. **Return to Kubernetes only by triggers**
-   - Need horizontal scaling for API/workers.
-   - Need controlled rolling deploys across multiple environments.
-   - Need autoscaling and self-healing beyond compose limits.
-
 ## Backtesting API (ready)
 
 - Single model backtest:
@@ -255,12 +234,11 @@ uv run uvicorn main:app --reload
 # then open /docs and run backtesting endpoints
 ```
 
-## Research extension layer (optional)
+## Исследовательский слой (опционально)
 
-The production pipeline stays unchanged. Experimental ranking/regression research is isolated in
-`backend/app/research_models/` and launched only via a dedicated CLI.
+Код в `backend/app/research_models/` — отдельный CLI, не влияет на прод-пайплайн.
 
-Example runs (from `backend/`):
+Примеры (из `backend/`):
 
 ```bash
 # 1) Baseline classification + top-k execution
@@ -291,11 +269,7 @@ uv run python scripts/run_research_experiment.py \
   --compare_all
 ```
 
-Artifacts are written to `backend/research_outputs/...`:
-- `summary.json` (metrics + strategy metrics + diagnostics flags)
-- `predictions.csv` (scores + targets)
-- `strategy_daily.csv` (equity curve inputs)
-- `decile_table.csv`, `regime_ic.csv`, `diagnostics_summary.md`, `decile_mean_fwd5d.png`
+Артефакты пишутся в `backend/research_outputs/<run>/` (каталог в `.gitignore`): `summary.json`, `predictions.csv`, `strategy_daily.csv`, `decile_table.csv`, `regime_ic.csv`, `decile_mean_fwd5d.png` и др.
 
 ## Disclaimer
 

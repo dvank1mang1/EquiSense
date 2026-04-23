@@ -75,14 +75,7 @@ def purged_kfold_with_horizon(
     label_horizon_days: int = 1,
     embargo_days: int = 5,
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """
-    Purged k-fold with explicit label horizon.
-
-    Train uses only dates strictly before:
-      test_start - label_horizon_days - embargo_days
-
-    This is stricter than simple embargo and reduces leakage when targets depend on t+H.
-    """
+    """Purged k-fold: train только до ``test_start - label_horizon_days - embargo_days``."""
     u = np.sort(np.unique(dates))
     n = len(u)
     if n_splits < 2:

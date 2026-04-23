@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-Assemble thesis-ready figures and tables into ./thesis_figures/.
-
-Reads latest outputs from notebooks/results/ (run run_research_pack.py first).
-"""
+"""Копирует фигуры из ``notebooks/results/`` в ``thesis_figures/`` (после ``run_research_pack.py``)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,39 +29,8 @@ def _copy_alias(src_name: str, dest_name: str) -> None:
     (OUT / dest_name).write_bytes(src.read_bytes())
 
 
-def _build_strategy_table_md() -> None:
-    clean = pd.read_csv(OUT / "strategy_comparison_clean.csv")
-    # Readable numeric formatting for thesis paste-in
-    hdr = (
-        "| Strategy | IC | Precision@k | Sharpe | Avg. return | Hit rate |\n"
-        "| --- | --- | --- | --- | --- | --- |\n"
-    )
-    body_lines: list[str] = []
-    for _, r in clean.iterrows():
-        ic = float(r["ic"])
-        ic_s = f"{ic:.4f}" if abs(ic) >= 1e-3 else f"{ic:.2e}"
-        name = str(r["strategy"]).replace("_", " ")
-        body_lines.append(
-            f"| {name} | {ic_s} | {float(r['precision_at_k']):.4f} | "
-            f"{float(r['sharpe']):.4f} | {float(r['average_return']):.6f} | "
-            f"{float(r['hit_rate']):.4f} |"
-        )
-    md_lines = [
-        "# Strategy comparison (holdout, cross-sectional ranking)",
-        "",
-        "Values from `strategy_comparison_clean.csv` (research pipeline).",
-        "",
-        hdr + "\n".join(body_lines),
-        "",
-    ]
-    (OUT / "strategy_comparison_table.md").write_text("\n".join(md_lines), encoding="utf-8")
-
-
 def _build_long_short_cumulative() -> None:
-    """
-    Per-date long–short: top prediction quantile minus bottom (Q5 − Q1),
-    same cross-sectional bins as cumulative_returns_by_quantile.
-    """
+    """Long–short по квантилям прогноза (верхний минус нижний), как в quantile_daily_returns."""
     daily = pd.read_csv(SRC / "quantile_daily_returns.csv")
     if daily.empty:
         raise ValueError("quantile_daily_returns.csv is empty")
@@ -108,7 +73,6 @@ def main() -> None:
     # Names expected by typical thesis LaTeX \includegraphics{...}
     _copy_alias("quantile_returns.png", "quantile_plot.png")
     _copy_alias("cumulative_returns_by_quantile.png", "cum_returns.png")
-    _build_strategy_table_md()
     _build_long_short_cumulative()
     print(f"Thesis figures ready in: {OUT}")
 

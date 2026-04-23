@@ -1,10 +1,10 @@
 """
-Rigorous research pack: walk-forward purged CV, ablations, costs, Diebold–Mariano.
+Research pack: walk-forward / purged CV, ablations, costs, Diebold–Mariano.
 
 Run from repo root:
   cd backend && uv run python ../notebooks/run_research_pack.py
 
-Outputs under `notebooks/results/`.
+Пишет CSV/PNG в ``notebooks/results/``.
 """
 
 from __future__ import annotations
@@ -240,24 +240,10 @@ def _feature_groups(df: pd.DataFrame) -> dict[str, list[str]]:
         "fundamental_strategy": fund,
         "alternative_data_strategy": sent,
         "hybrid_strategy": hybrid,
-        # Backward-compatible aliases used in legacy parts of the script/report.
         "tech_only": tech,
         "tech_fund": tech + fund,
         "full": hybrid,
     }
-
-
-def _label_dist_markdown(df: pd.DataFrame) -> str:
-    if df.empty:
-        return "_no data_"
-    hdr = "| split | n | n_positive | n_negative | frac_positive |\n| --- | --- | --- | --- | --- |"
-    rows = []
-    for _, row in df.iterrows():
-        rows.append(
-            f"| {row['split']} | {row['n']} | {row['n_positive']} | {row['n_negative']} | "
-            f"{float(row['frac_positive']):.4f} |"
-        )
-    return hdr + "\n" + "\n".join(rows)
 
 
 def _label_split_stats(y: pd.Series, split: str) -> dict[str, object]:
@@ -1220,17 +1206,6 @@ def run_pipeline(
         plt.tight_layout()
         plt.savefig(OUT_DIR / "cumulative_returns_by_quantile.png", dpi=170)
         plt.close()
-    if not strategy_df.empty:
-        best = strategy_df.iloc[0]
-        interp = (
-            "# Strategy Interpretation\n\n"
-            f"- Best strategy: **{best['strategy']}**\n"
-            f"- IC: **{best['ic']:.4f}**, Rank IC: **{best['rank_ic']:.4f}**\n"
-            f"- Precision@k: **{best['precision_at_k']:.4f}**, Sharpe: **{best['sharpe']:.3f}**\n"
-            f"- Average return (top-fraction): **{best['average_return']:.6f}**, Hit rate: **{best['hit_rate']:.3f}**\n"
-        )
-        (OUT_DIR / "strategy_interpretation.md").write_text(interp, encoding="utf-8")
-
     pd.DataFrame(
         [
             {
@@ -1282,21 +1257,6 @@ def run_pipeline(
         daily_meta,
         cv_df,
         groups,
-    )
-    _report(
-        metrics_df,
-        daily_net,
-        daily_meta,
-        cv_df,
-        groups,
-        thr,
-        cost_bps,
-        dm,
-        dm_meta,
-        stats_net,
-        stats_meta,
-        spa,
-        label_dist,
     )
 
 
@@ -1408,131 +1368,6 @@ def _plots(
         plt.tight_layout()
         plt.savefig(OUT_DIR / "08_ablation_cv.png", dpi=160)
         plt.close()
-
-
-def _report(
-    metrics_df: pd.DataFrame,
-    backtest: pd.DataFrame,
-    backtest_meta: pd.DataFrame,
-    cv_df: pd.DataFrame,
-    groups: dict[str, list[str]],
-    threshold: float,
-    cost_bps: float,
-    dm: dict[str, float],
-    dm_meta: dict[str, float],
-    stats_net: dict[str, float],
-    stats_meta: dict[str, float],
-    spa: dict[str, float],
-    label_dist: pd.DataFrame,
-) -> None:
-    winner = metrics_df.sort_values("rank_ic_mean", ascending=False).iloc[0]
-    final_bh = float(backtest["buy_hold_equally_weighted"].iloc[-1])
-    final_net = float(backtest["strategy_curve_net"].iloc[-1])
-    final_meta = float(backtest_meta["strategy_curve_net"].iloc[-1])
-    uplift = (final_net / final_bh - 1.0) * 100.0 if final_bh > 0 else np.nan
-
-    wf_mean = (
-        cv_df[cv_df["split_name"] == "walk_forward"]["rank_ic"].mean()
-        if not cv_df.empty
-        else float("nan")
-    )
-    pk_mean = (
-        cv_df[cv_df["split_name"] == "purged_kfold"]["rank_ic"].mean()
-        if not cv_df.empty
-        else float("nan")
-    )
-    pkh_mean = (
-        cv_df[cv_df["split_name"] == "purged_kfold_horizon"]["rank_ic"].mean()
-        if not cv_df.empty
-        else float("nan")
-    )
-    cpcv_mean = (
-        cv_df[cv_df["split_name"] == "cpcv"]["rank_ic"].mean()
-        if not cv_df.empty and (cv_df["split_name"] == "cpcv").any()
-        else float("nan")
-    )
-
-    label_md = _label_dist_markdown(label_dist)
-
-    text = f"""# Research Pack Summary (rigorous)
-
-Generated from `backend/data/processed` with **walk-forward expanding CV**, **purged k-fold + embargo**,
-**holdout test**, **transaction costs**, and **Diebold–Mariano** on a **daily** universe-direction benchmark (see DM section).
-
-## Main task (single source of truth)
-- Primary objective: **cross-sectional stock ranking for portfolio selection**.
-- Classifiers are used as score generators; ranking/trading metrics are primary.
-- **ROC-AUC** and **PR-AUC** are reported in `model_metrics.csv` as **auxiliary classification** diagnostics; they are not optimization targets for Optuna in this pack.
-
-See **`notebooks/LITERATURE_REVIEW.md`** for paper references (XGB/LightGBM/FinBERT/Optuna + validation/statistics).
-See **`notebooks/RESEARCH_OUTPUTS.md`** for where every artifact is written.
-
-## Class balance & modeling choices (this run)
-- Logistic baselines: `class_weight=balanced`; RandomForest / meta / OOF RF: `class_weight=balanced` (aligned with production training helpers).
-- Median imputation for all sklearn pipelines in this pack.
-
-## Label distribution (5-day cumulative up > 1%), by time split
-{label_md}
-
-## Validation & leakage control
-- Target: `target_up_5d` = 1 iff **5-day cumulative forward return** `fwd_5d` > **1%** (sum of next five daily returns from `t+1`); features at `t` do not use future prices beyond the engineered pipeline.
-- **IC, Rank IC, precision@k, quantile / long–short spread** use the same horizon: `forward_return` in evaluation frames is **`fwd_5d`**, not next-day `ret_1d`.
-- **Equal-weight backtests, DM, SPA-lite** use **daily** `ret_1d` (execution / reporting horizon); do not equate that PnL horizon with the 5-day label unless you redesign the strategy to hold 5 days.
-- Walk-forward expanding splits and purged k-fold reduce overlap between train and test in time.
-- Threshold for strategy (`p >= {threshold:.2f}`) chosen on **validation** only, **not** on holdout.
-
-## Holdout — classification (best row by Rank IC)
-- **{winner["model"]}**: prevalence={winner.get("prevalence_positive", float("nan")):.4f}, pr_auc={winner.get("pr_auc", float("nan")):.4f} (pr_auc − prevalence={winner.get("pr_auc_minus_prevalence", float("nan")):.4f}), roc_auc={winner.get("roc_auc", float("nan")):.4f}
-
-## Holdout — ranking / 5d forward return (same horizon as label)
-- **{winner["model"]}**: ic={winner.get("ic_mean", float("nan")):.4f}, rank_ic={winner.get("rank_ic_mean", float("nan")):.4f}, precision@k (per-date top 20% by score)={winner.get("precision_at_k", float("nan")):.4f}, long_short_spread={winner.get("long_short_spread", float("nan")):.6f}
-- Pooled-row precision (legacy, not comparable to IC) is in `model_metrics.csv` as `precision_at_k_pooled_top25pct_rows`.
-
-## Cross-validation (mean Rank IC across folds)
-- Walk-forward: **{wf_mean:.4f}**
-- Purged k-fold: **{pk_mean:.4f}**
-- Purged k-fold + horizon: **{pkh_mean:.4f}**
-- CPCV (combinatorial purged, full features): **{cpcv_mean:.4f}**
-
-## Ablations (feature groups)
-- `tech_only`: {len(groups["tech_only"])} features
-- `tech_fund`: {len(groups["tech_fund"])} features
-- `full`: {len(groups["full"])} features
-
-## Backtest (holdout, equal-weight, costs {cost_bps} bps per side on turnover)
-- Strategy equity (net): **{final_net:.3f}** vs buy-and-hold **{final_bh:.3f}**
-- Meta-gated strategy equity (net): **{final_meta:.3f}**
-- Relative uplift vs B&H: **{uplift:.2f}%**
-- Net Sharpe (ann.): **{stats_net.get("sharpe_strategy_net", float("nan")):.3f}**
-- Meta Net Sharpe (ann.): **{stats_meta.get("sharpe_strategy_net", float("nan")):.3f}**
-- Max DD (net): **{stats_net.get("max_dd_net", float("nan")):.4f}**
-
-## Diebold–Mariano (daily next-day universe sign vs forecast log-loss)
-- DM stat: **{dm.get("dm_stat", float("nan")):.4f}**
-- p-value (two-sided): **{dm.get("p_value_two_sided", float("nan")):.4e}**
-- Meta DM stat: **{dm_meta.get("dm_stat", float("nan")):.4f}**
-- Meta p-value (two-sided): **{dm_meta.get("p_value_two_sided", float("nan")):.4e}**
-
-## SPA-lite (block bootstrap on daily excess vs buy&hold)
-- Observed mean excess: **{spa.get("observed_mean", float("nan")):.6f}**
-- One-sided p-value (H1: mean > 0): **{spa.get("p_value_one_sided", float("nan")):.4f}**
-
-## Interpretation (auto-generated checklist)
-- **Horizons:** ranking metrics above use the same 5-day `fwd_5d` as the label; if IC/Rank IC and quantile spread still disagree, that is more likely **noise / weak signal / calibration** than a 1d-vs-5d definition bug.
-- If **Rank IC** and **IC** are near zero and quantile spreads are weak, treat ranking signal as **not demonstrated** on this panel; focus on pipeline sanity, not live trading.
-- Use **precision@k**, **quantile spread**, and **Sharpe/hit-rate** together; no single ranking metric is sufficient on noisy financial panels.
-- Use **DM p-values** only in the sense documented above (daily sign vs probability); they do not validate the 5d label and do not guarantee economic value after costs.
-- **SPA-lite** is a coarse block-bootstrap on mean excess; it is **not** full Hansen (2005) SPA across many models — see literature notes.
-- Compare **net** backtest curves to gross when costs matter; meta-gated curve is exploratory (OOF primary + meta on train/val).
-
-## Produced artifacts
-- `RESEARCH_SUMMARY.md` (this file), `label_distribution.csv`
-- `cv_fold_metrics.csv`, `cv_summary.csv`
-- `model_metrics.csv`, `metric_sanity.csv`, `test_predictions.csv`, `feature_importance_top20.csv`
-- `backtest_curves.csv`, `backtest_curves_meta.csv`, `backtest_stats.csv`, `spa_lite_holdout.csv`
-- PNGs `01`–`08` (see folder)
-"""
-    (OUT_DIR / "RESEARCH_SUMMARY.md").write_text(text, encoding="utf-8")
 
 
 def main() -> None:

@@ -39,6 +39,9 @@ backend/data/processed/
 backend/data/models/
 backend/data/jobs/
 
+# One-off research CLI outputs (local only)
+backend/research_outputs/
+
 # ML artifacts
 *.pkl
 *.joblib
