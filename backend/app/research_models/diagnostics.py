@@ -47,9 +47,7 @@ def _decile_table(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _regime_ic_table(frame: pd.DataFrame) -> pd.DataFrame:
-    d = frame[
-        ["date", "score", "fwd_5d", "regime_high_vol", "regime_trend"]
-    ].dropna().copy()
+    d = frame[["date", "score", "fwd_5d", "regime_high_vol", "regime_trend"]].dropna().copy()
     if d.empty:
         return pd.DataFrame(columns=["regime", "ic_mean", "rank_ic_mean", "n_rows"])
 

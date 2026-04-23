@@ -4,7 +4,6 @@ from loguru import logger
 
 from app.core.config import settings
 
-
 _CONTEXT_DEFAULTS = {
     "request_id": "-",
     "method": "-",

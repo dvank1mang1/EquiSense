@@ -351,9 +351,7 @@ async def ensure_prediction_ready(
         body.force_full,
     )
     selection = await _resolve_model_selector(model, training)
-    before = await service.readiness(
-        sym, selection.model_id, artifact_path=selection.artifact_path
-    )
+    before = await service.readiness(sym, selection.model_id, artifact_path=selection.artifact_path)
     run_id = new_run_id()
     status_path, lineage_path = await orchestrator.run(
         tickers=[sym],
@@ -363,9 +361,7 @@ async def ensure_prediction_ready(
         refresh_fundamentals=body.refresh_fundamentals,
         run_etl=body.run_etl,
     )
-    after = await service.readiness(
-        sym, selection.model_id, artifact_path=selection.artifact_path
-    )
+    after = await service.readiness(sym, selection.model_id, artifact_path=selection.artifact_path)
     checks_before = {
         k: ReadinessCheck(ok=bool(v.get("ok", False)), detail=str(v.get("detail", "")))
         for k, v in before.checks.items()

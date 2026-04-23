@@ -135,7 +135,9 @@ class ShapExplainer:
             # с TypeError ("not callable"); masker + predict_proba стабильнее.
             self._explainer_kind = "predict_proba"
             masker = shap.maskers.Independent(bg_df)
-            self._explainer = shap.Explainer(self._model.model.predict_proba, masker)
+            fitted = self._model.model
+            assert fitted is not None
+            self._explainer = shap.Explainer(fitted.predict_proba, masker)
 
     def explain_single(self, X_row: pd.DataFrame) -> dict[str, float]:
         if self._explainer is None:

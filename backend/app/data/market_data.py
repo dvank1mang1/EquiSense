@@ -229,15 +229,12 @@ class MarketDataClient:
         last_close = _maybe_float(last.get("close"))
         prev_close = _maybe_float(prev.get("close"))
         change = (
-            (last_close - prev_close)
-            if last_close is not None and prev_close is not None
-            else None
+            (last_close - prev_close) if last_close is not None and prev_close is not None else None
         )
-        change_percent = (
-            f"{(change / prev_close) * 100.0:.4f}"
-            if change is not None and prev_close not in (None, 0.0)
-            else None
-        )
+        if change is not None and prev_close is not None and prev_close != 0.0:
+            change_percent = f"{(change / prev_close) * 100.0:.4f}"
+        else:
+            change_percent = None
         return {
             "symbol": sym,
             "open": _maybe_float(last.get("open")),
@@ -331,18 +328,18 @@ class MarketDataClient:
             raise DataProviderError(f"Finnhub HTTP {err.response.status_code}") from err
         payload = cast(dict[str, Any], r.json())
         price = _maybe_float(payload.get("c"))
-        if price in (None, 0.0):
+        if price is None or price == 0.0:
             raise DataProviderError("Finnhub quote is empty")
+        price_f = price
         open_ = _maybe_float(payload.get("o"))
         high = _maybe_float(payload.get("h"))
         low = _maybe_float(payload.get("l"))
         prev_close = _maybe_float(payload.get("pc"))
-        change = (price - prev_close) if prev_close is not None else None
-        change_percent = (
-            f"{(change / prev_close) * 100.0:.4f}"
-            if change is not None and prev_close not in (None, 0.0)
-            else None
-        )
+        change = (price_f - prev_close) if prev_close is not None else None
+        if change is not None and prev_close is not None and prev_close != 0.0:
+            change_percent = f"{(change / prev_close) * 100.0:.4f}"
+        else:
+            change_percent = None
         ts = payload.get("t")
         latest = (
             pd.Timestamp(int(ts), unit="s", tz="UTC").strftime("%Y-%m-%d")
@@ -354,7 +351,7 @@ class MarketDataClient:
             "open": open_,
             "high": high,
             "low": low,
-            "price": price,
+            "price": price_f,
             "volume": None,
             "latest_trading_day": latest,
             "previous_close": prev_close,

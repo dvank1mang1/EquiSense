@@ -45,7 +45,9 @@ def test_momentum_top_k_produces_signals() -> None:
             "close": np.linspace(100.0, 110.0, n),
         }
     )
-    p = momentum_top_k_predictions(price, return_window=10, lookback=40, top_quantile=0.3, rebalance_every=3)
+    p = momentum_top_k_predictions(
+        price, return_window=10, lookback=40, top_quantile=0.3, rebalance_every=3
+    )
     assert set(p["signal"].unique()) <= {"Hold", "Buy"}
 
 

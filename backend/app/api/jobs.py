@@ -11,7 +11,6 @@ from app.core.config import settings
 from app.jobs.batch_refresh import (
     BatchRefreshOrchestrator,
 )
-from app.jobs.run_ids import new_run_id
 from app.jobs.queue import (
     get_job_queue,
     safe_dead_letter_list,
@@ -20,6 +19,7 @@ from app.jobs.queue import (
     safe_requeue_failed,
 )
 from app.jobs.registry import InMemoryJobRegistry, get_job_registry
+from app.jobs.run_ids import new_run_id
 from app.services.dependencies import get_batch_refresh_orchestrator, get_job_store
 
 router = APIRouter()

@@ -17,6 +17,7 @@ from app.data.persistence import fundamentals_json_path, ohlcv_parquet_path
 from app.domain.exceptions import FeatureDataMissingError, ModelArtifactMissingError
 from app.domain.identifiers import ModelId
 from app.domain.prediction import PredictionOutcome, PredictionReadinessOutcome
+from app.models.base import BaseMLModel
 
 
 def _resolve_feature_set(instance: object) -> list[str]:
@@ -141,7 +142,7 @@ class PredictionService:
         normalized = ticker.strip().upper()
         model_cls = get_model_class(model_id)
 
-        def _load_model() -> object:
+        def _load_model() -> BaseMLModel:
             inst = model_cls()
             inst.load(artifact_path)
             return inst
@@ -151,7 +152,7 @@ class PredictionService:
         except FileNotFoundError as e:
             raise ModelArtifactMissingError(
                 f"No trained artifact for {model_id.value}. "
-                f"POST /api/v1/models/{model_id.value}/train with JSON {{\"ticker\":\"AAPL\"}}, "
+                f'POST /api/v1/models/{model_id.value}/train with JSON {{"ticker":"AAPL"}}, '
                 "poll GET …/train/{{run_id}} until status completed, then call predict again "
                 f"(or copy weights to {model_cls().model_path})."
             ) from e

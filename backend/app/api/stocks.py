@@ -13,7 +13,11 @@ from app.contracts.data_providers import (
 from app.core.config import settings
 from app.data.local_artifacts import summarize_data_artifacts
 from app.data.news_filter import filter_news_for_ticker
-from app.data.periods import ohlcv_series_quality_hints, ohlcv_tail_by_period, sanitize_ohlcv_dataframe
+from app.data.periods import (
+    ohlcv_series_quality_hints,
+    ohlcv_tail_by_period,
+    sanitize_ohlcv_dataframe,
+)
 from app.data.persistence import (
     list_cached_ohlcv_tickers,
     read_fundamentals_json,
@@ -367,7 +371,8 @@ async def get_technical_indicators(
     df = sanitize_ohlcv_dataframe(df)
     if df.empty:
         raise HTTPException(
-            status_code=503, detail="No OHLCV rows after normalizing dates and close prices.",
+            status_code=503,
+            detail="No OHLCV rows after normalizing dates and close prices.",
         )
 
     engineer = TechnicalFeatureEngineer()

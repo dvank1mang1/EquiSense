@@ -128,8 +128,10 @@ def run_rank_based_strategy(
         for d in dates:
             if d in rebal_dates:
                 s = scores.loc[d]
-                want = _top_k_weights(s, top_k_pct) if mode == "top_k" else _threshold_weights(
-                    s, threshold
+                want = (
+                    _top_k_weights(s, top_k_pct)
+                    if mode == "top_k"
+                    else _threshold_weights(s, threshold)
                 )
                 chosen, _ = _apply_turnover_cap(previous, want, max_turnover=max_turnover)
                 previous = chosen

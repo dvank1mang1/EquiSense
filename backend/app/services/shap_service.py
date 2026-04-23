@@ -9,6 +9,7 @@ from app.domain.exceptions import FeatureDataMissingError, ModelArtifactMissingE
 from app.domain.identifiers import ModelId
 from app.explainability.shap_explainer import ShapExplainer
 from app.models import get_model_class
+from app.models.base import BaseMLModel
 
 
 class ShapExplanationOutcome:
@@ -45,7 +46,7 @@ class ShapService:
 
         model_cls = get_model_class(model_id)
 
-        def _load_model() -> object:
+        def _load_model() -> BaseMLModel:
             inst = model_cls()
             inst.load(artifact_path)
             return inst

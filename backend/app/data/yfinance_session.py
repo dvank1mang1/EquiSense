@@ -9,6 +9,7 @@ this for subsequent v8 chart requests that yfinance issues.
 from __future__ import annotations
 
 import threading
+from typing import Any
 
 from loguru import logger
 
@@ -32,7 +33,7 @@ def ensure_yfinance_session() -> None:
             _initialized = True
             return
 
-        session = curl_requests.Session(impersonate="chrome120")
+        session: Any = curl_requests.Session(impersonate="chrome120")
         proxy = (settings.yfinance_proxy_url or "").strip()
         if proxy:
             session.proxies = {"http": proxy, "https": proxy}

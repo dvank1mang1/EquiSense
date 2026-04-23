@@ -54,8 +54,10 @@ def build_research_panel(store: FeatureStorePort, tickers: list[str]) -> Researc
         if base.empty or "date" not in base.columns or "returns" not in base.columns:
             continue
         base["date"] = pd.to_datetime(base["date"], errors="coerce")
-        base = base.dropna(subset=["date"]).sort_values("date").drop_duplicates(
-            subset=["date"], keep="last"
+        base = (
+            base.dropna(subset=["date"])
+            .sort_values("date")
+            .drop_duplicates(subset=["date"], keep="last")
         )
         base["ticker"] = ticker
         base = _enrich_targets_and_regimes(base)

@@ -45,7 +45,9 @@ def buy_hold_predictions(price_df: pd.DataFrame) -> pd.DataFrame:
     p["date"] = pd.to_datetime(p["date"])
     p["signal"] = "Strong Buy"
     p["probability"] = 1.0
-    return p.sort_values("date").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+    return (
+        p.sort_values("date").drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+    )
 
 
 def ma_trend_predictions(price_df: pd.DataFrame, *, window: int = 200) -> pd.DataFrame:

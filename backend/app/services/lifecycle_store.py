@@ -6,12 +6,11 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from loguru import logger
-
-from app.services.db_unreachable import is_benign_database_unreachable
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.domain.identifiers import ModelId
+from app.services.db_unreachable import is_benign_database_unreachable
 
 
 @dataclass

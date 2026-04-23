@@ -324,7 +324,9 @@ def test_strategy_suite_http_returns_curves(monkeypatch: pytest.MonkeyPatch) -> 
 
     async def _fake_read(ticker: str, *, root=None):
         _ = ticker, root
-        return pd.DataFrame({"date": dates, "close": close.values, "volume": vol.values.astype(int)})
+        return pd.DataFrame(
+            {"date": dates, "close": close.values, "volume": vol.values.astype(int)}
+        )
 
     class _Store120(_FakeStore):
         def build_combined(self, ticker: str) -> pd.DataFrame:

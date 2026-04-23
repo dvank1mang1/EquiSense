@@ -10,8 +10,4 @@ def format_kagglehub_remote_path(ticker: str, template: str) -> str:
     """
     u = ticker.strip().upper()
     low = u.lower()
-    return (
-        template.replace("{TICKER}", u)
-        .replace("{ticker}", u)
-        .replace("{ticker_lower}", low)
-    )
+    return template.replace("{TICKER}", u).replace("{ticker}", u).replace("{ticker_lower}", low)

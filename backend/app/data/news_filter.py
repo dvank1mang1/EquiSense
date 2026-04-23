@@ -18,7 +18,9 @@ def _is_spam_news(title: str, url: str, description: str = "") -> bool:
     tl = title.lower()
     ul = url.lower()
     dl = description.lower()
-    if any(x in ul for x in ("pypi.org", "npmjs.com", "packagist.org", "crates.io", "rubygems.org")):
+    if any(
+        x in ul for x in ("pypi.org", "npmjs.com", "packagist.org", "crates.io", "rubygems.org")
+    ):
         return True
     blob = f"{tl} {dl}"
     spam_phrases = (

@@ -12,7 +12,7 @@ from loguru import logger
 from app.core.config import settings
 
 _ENGINE_LOCK = threading.Lock()
-_ENGINE_SINGLETON: "SentimentFeatureEngineer | None" = None
+_ENGINE_SINGLETON: SentimentFeatureEngineer | None = None
 
 
 def _finbert_device() -> Any:

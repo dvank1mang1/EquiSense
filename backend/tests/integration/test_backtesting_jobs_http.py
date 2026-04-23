@@ -66,7 +66,9 @@ class _FakeStore:
 @pytest.mark.integration
 def test_backtest_job_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     if not _postgres_job_queue_reachable():
-        pytest.skip("Postgres job queue недоступен (запустите postgres, например docker compose up postgres)")
+        pytest.skip(
+            "Postgres job queue недоступен (запустите postgres, например docker compose up postgres)"
+        )
 
     from main import app
 

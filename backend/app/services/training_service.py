@@ -318,7 +318,9 @@ class TrainingService:
                         index=x_train.index,
                     )
                     train_dates = pd.to_datetime(train_df["date"], errors="coerce").dt.normalize()
-                    group = [int(v) for v in train_dates.value_counts(sort=False).sort_index().values]
+                    group = [
+                        int(v) for v in train_dates.value_counts(sort=False).sort_index().values
+                    ]
                     await asyncio.to_thread(
                         instance.fit_ranker,  # type: ignore[attr-defined]
                         x_train_i,
@@ -350,14 +352,14 @@ class TrainingService:
                     }
                 )
                 fin_metrics = financial_selection_metrics(eval_frame)
-                ic_metrics = information_coefficient_metrics(
-                    eval_frame, include_negated_score=True
-                )
+                ic_metrics = information_coefficient_metrics(eval_frame, include_negated_score=True)
                 reliability_df, ece = reliability_curve_and_ece(y_test, y_score, n_bins=10)
                 prev = float(pd.to_numeric(y_test, errors="coerce").astype(float).mean())
                 pr_auc_val = float(metrics.get("pr_auc", float("nan")))
                 pr_minus_prev = (
-                    float(pr_auc_val - prev) if pr_auc_val == pr_auc_val and prev == prev else float("nan")
+                    float(pr_auc_val - prev)
+                    if pr_auc_val == pr_auc_val and prev == prev
+                    else float("nan")
                 )
                 artifact_path = str(_artifact_path_for_run(model_id.value, run.run_id))
                 await asyncio.to_thread(instance.save, artifact_path)
@@ -432,9 +434,13 @@ class TrainingService:
                 if done is not None:
                     await self._experiment_store.upsert(done)
                 try:
-                    await asyncio.to_thread(_persist_metrics_alongside_artifact, artifact_path, sym, metrics)
+                    await asyncio.to_thread(
+                        _persist_metrics_alongside_artifact, artifact_path, sym, metrics
+                    )
                 except Exception as werr:  # noqa: BLE001
-                    logger.warning("Could not write metrics.json beside {}: {}", artifact_path, werr)
+                    logger.warning(
+                        "Could not write metrics.json beside {}: {}", artifact_path, werr
+                    )
 
         task = asyncio.create_task(_job())
         self._registry.register_task(run.run_id, task)
@@ -565,7 +571,9 @@ class TrainingService:
                     src: OfflineMetricsSource = (
                         "same_ticker_holdout" if ct == sym else "other_ticker_champion"
                     )
-                    return OfflineMetricsResult(got, src, ct if src == "other_ticker_champion" else sym)
+                    return OfflineMetricsResult(
+                        got, src, ct if src == "other_ticker_champion" else sym
+                    )
 
         if sidecar.is_file():
             try:
@@ -747,7 +755,9 @@ def _json_normalize_for_disk(obj: Any) -> Any:
     return obj
 
 
-def _persist_metrics_alongside_artifact(artifact_path: str, sym: str, metrics: dict[str, Any]) -> None:
+def _persist_metrics_alongside_artifact(
+    artifact_path: str, sym: str, metrics: dict[str, Any]
+) -> None:
     """So /compare can load holdout metrics when Postgres is down (flat joblib or after restart)."""
     path = Path(artifact_path).parent / "metrics.json"
     payload = _json_normalize_for_disk(dict(metrics))

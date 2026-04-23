@@ -101,7 +101,9 @@ def run_research_experiment(cfg: ResearchConfig) -> ResearchRunResult:
         ),
     }
     metrics.update(
-        _sanitize_metrics(classification_aux_metrics(test_scored["target_cls"], test_scored["score"]))
+        _sanitize_metrics(
+            classification_aux_metrics(test_scored["target_cls"], test_scored["score"])
+        )
     )
 
     strat = run_rank_based_strategy(
